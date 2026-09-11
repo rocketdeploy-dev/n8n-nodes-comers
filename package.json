@@ -29,7 +29,12 @@
 		"lint": "n8n-node lint",
 		"lint:fix": "n8n-node lint --fix",
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"scan": "node scripts/scan-package.mjs",
+		"pack:check": "node scripts/check-tarball.mjs",
+		"check:tag": "node scripts/release-tag.mjs",
+		"release": "n8n-node release",
+		"prepublishOnly": "node scripts/prepublish.mjs"
 	},
 	"files": [
 		"dist"
@@ -56,5 +61,15 @@
 	},
 	"peerDependencies": {
 		"n8n-workflow": "*"
+	},
+	"release-it": {
+		"git": {
+			"tagName": "${version}",
+			"tagAnnotation": "Release ${version}",
+			"commitMessage": "chore: release ${version}"
+		},
+		"npm": {
+			"publish": false
+		}
 	}
 }

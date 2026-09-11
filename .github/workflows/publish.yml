@@ -1,0 +1,164 @@
+# Publishes this package to npm when a release tag is pushed.
+#
+# A release has two halves, and they run in different places on purpose:
+#
+#   1. Something creates the tag — see below; that is the half that decides the
+#      version and may change the repository.
+#   2. Here, the tag is the trigger. This workflow verifies the commit the tag
+#      points at and publishes it. It never versions, commits or tags — a
+#      pipeline that rewrites the repository it is publishing from cannot be
+#      re-run safely, and a tag would end up naming a commit that no longer
+#      matches what was released.
+#
+# Every publish, first or not, happens from a GitHub-hosted runner with
+# `--provenance`. n8n requires community nodes to carry a provenance
+# attestation, and only a workflow can produce one.
+#
+# ─── THE FIRST RELEASE (0.1.0) IS DIFFERENT, TWICE OVER ────────────────────────
+#
+# It cannot come from `npm run release`, which bumps the version before it
+# tags: package.json already says 0.1.0, so the next bump would be 0.1.1.
+#
+# And it cannot authenticate the way every later release does. npm Trusted
+# Publishing is configured *on a package*, so there is nothing to configure
+# until the package exists. The first publish is therefore the one and only
+# time a token is used — a short-lived granular token, held in the
+# NPM_BOOTSTRAP_TOKEN secret, scoped to creating this package.
+#
+#   1.  Merge to main with package.json at 0.1.0.
+#   2.  Create or confirm the `@comers` scope on npm.
+#   3.  Create a granular access token that may publish a new public package
+#       in that scope.
+#   4.  Enable 2FA on the npm account and configure the token to npm's current
+#       requirements for automated publishing.
+#   5.  Save it as the GitHub Actions secret NPM_BOOTSTRAP_TOKEN.
+#   6.  git tag -a 0.1.0 -m "Release 0.1.0"
+#   7.  git push origin 0.1.0        (the tag only — main is already merged)
+#   8.  This workflow publishes 0.1.0 with --provenance --access public.
+#   9.  Now that the package exists, add a Trusted Publisher to it:
+#         Repository owner: rocketdeploy-dev
+#         Repository name:  n8n-nodes-comers
+#         Workflow name:    publish.yml
+#         Environment:      (leave blank)
+#       and allow direct `npm publish`.
+#   10. Delete NPM_BOOTSTRAP_TOKEN from this repository's secrets.
+#   11. Revoke the granular token on npm.
+#   12. Every release from then on authenticates over OIDC and uses no secret.
+#
+# Steps 10 and 11 are not optional housekeeping. Once Trusted Publishing is in
+# place the token is pure standing risk: a long-lived publish credential that
+# no workflow path still needs.
+#
+# ─── EVERY RELEASE AFTER THAT ──────────────────────────────────────────────────
+#
+#   npm run release
+#
+# bumps the version, writes the changelog, commits, tags and pushes — which
+# starts this workflow, which publishes over OIDC with no secret involved.
+#
+# ─── TAG FORMAT ────────────────────────────────────────────────────────────────
+#
+# Tags are the bare version: 0.1.0, 1.2.3, 2.0.0-rc.1. No `v` prefix, and no
+# build metadata. The format is pinned by the `release-it` block in
+# package.json so it cannot drift, and `npm run check:tag` is what enforces it.
+#
+# The filter below only decides what is worth starting a run for, and it is
+# deliberately the coarser of the two. It cannot be made exact: in a GitHub ref
+# filter `+` is a quantifier, not a literal, so there is no pattern that
+# excludes a tag for containing one — and a filter that tried would be rejected
+# as invalid, taking the whole workflow with it.
+#
+# What matters holds anyway: every tag the check accepts matches the filter, so
+# a valid release can never be silently ignored. A prerelease tag carrying
+# build metadata does start a run, and then fails the check loudly, which is
+# the right way round.
+
+name: Publish
+
+on:
+  push:
+    tags:
+      # `+` here is the glob quantifier — one or more of the preceding digit.
+      # `.` and `-` are literals.
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Required to mint the OIDC token npm exchanges for publish access, and
+      # to sign the provenance attestation. Both publish paths sign; only the
+      # later ones authenticate this way.
+      id-token: write
+      # Narrowed from the default, which is write. Nothing here writes to the
+      # repository.
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted Publishing needs a newer npm than the Node LTS image ships.
+      - name: Use an npm that can publish over OIDC
+        run: npm install --global npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Scan as an n8n community package
+        run: npm run scan
+
+      - name: Check what publishing would upload
+        run: npm run pack:check
+
+      # The tag and package.json are set by different steps of the release and
+      # nothing else makes them agree. Without this, a hand-pushed tag or a
+      # re-run against a moved tag would publish a version nobody named.
+      - name: Check the tag names this version
+        run: npm run check:tag
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
+      # ── One of the two steps below runs. Never both, never neither. ──
+
+      # The bootstrap. This is the only step in the only run that sees a token,
+      # and it exists solely because Trusted Publishing cannot be configured
+      # for a package that does not exist yet. A missing secret fails here
+      # rather than quietly falling through to OIDC, which cannot work either:
+      # silently trying the other path would turn a setup mistake into a
+      # confusing npm error.
+      - name: Publish 0.1.0 (one-time bootstrap, granular token)
+        if: github.ref_name == '0.1.0'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::NPM_BOOTSTRAP_TOKEN is not set. The 0.1.0 bootstrap publish needs a granular npm token, because Trusted Publishing cannot be configured before the package exists. See the header of this workflow."
+            exit 1
+          fi
+          npm publish --access public --provenance
+
+      # Every release after the bootstrap. No secret is referenced, so none is
+      # available: authentication is the OIDC token minted from the permissions
+      # above and exchanged with npm.
+      - name: Publish (Trusted Publishing, OIDC)
+        if: github.ref_name != '0.1.0'
+        run: npm publish --access public --provenance
