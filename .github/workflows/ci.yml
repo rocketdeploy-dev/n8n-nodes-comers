@@ -25,6 +25,17 @@ jobs:
           node-version: 'lts/*'
           cache: 'npm'
 
+      # Pinned, and pinned to the same version in publish.yml. Verifying a PR
+      # on one npm and publishing on another is how an npm 12 change to
+      # `npm pack --json` reached publishing without CI ever seeing it.
+      - name: Use the pinned npm
+        run: npm install --global npm@12.0.2
+
+      - name: Report the toolchain
+        run: |
+          node --version
+          npm --version
+
       - name: Install dependencies
         run: npm ci
 
