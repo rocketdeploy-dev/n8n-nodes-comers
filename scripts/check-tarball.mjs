@@ -11,12 +11,18 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
+import { normalizePackReport } from './pack-report.mjs';
+
 const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
 
-const packed = JSON.parse(
-	execFileSync('npm', ['pack', '--dry-run', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }),
-);
-const files = packed[0].files.map((file) => file.path).sort();
+const npm = (args) =>
+	execFileSync('npm', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+
+const { files, size } = normalizePackReport({
+	report: JSON.parse(npm(['pack', '--dry-run', '--json'])),
+	packageName: manifest.name,
+	npmVersion: npm(['--version']).trim(),
+});
 
 const failures = [];
 const require = (condition, message) => {
@@ -73,5 +79,5 @@ if (failures.length > 0) {
 	process.exit(1);
 }
 
-console.log(`Tarball check passed: ${files.length} files, ${packed[0].size} bytes`);
+console.log(`Tarball check passed: ${files.length} files, ${size} bytes`);
 for (const file of files) console.log(`  ${file}`);

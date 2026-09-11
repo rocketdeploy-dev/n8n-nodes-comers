@@ -107,9 +107,18 @@ jobs:
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
 
-      # Trusted Publishing needs a newer npm than the Node LTS image ships.
-      - name: Use an npm that can publish over OIDC
-        run: npm install --global npm@latest
+      # Pinned, and pinned identically in ci.yml. Trusted Publishing needs a newer
+      # npm than the Node LTS image ships, but `npm@latest` let this workflow
+      # drift onto a different npm than the one every PR was verified against —
+      # which is how an npm 12 change to `npm pack --json` reached publishing
+      # without CI ever seeing it.
+      - name: Use the pinned npm
+        run: npm install --global npm@12.0.2
+
+      - name: Report the toolchain
+        run: |
+          node --version
+          npm --version
 
       - name: Install dependencies
         run: npm ci

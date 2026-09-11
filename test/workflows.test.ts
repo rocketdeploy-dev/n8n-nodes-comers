@@ -80,6 +80,8 @@ const githubRefFilter = (filter: string): RegExp => {
 };
 
 const BOOTSTRAP_TAG = '0.1.0';
+/** One npm for both workflows; see "the npm both workflows run" below. */
+const PINNED_NPM = '12.0.2';
 const BOOTSTRAP_SECRET = 'NPM_BOOTSTRAP_TOKEN';
 
 describe('the publish workflow', () => {
@@ -235,6 +237,62 @@ describe('the publish workflow', () => {
 		expect(matchesFilter('2.0.0-rc.1+sha.abc')).toBe(true);
 		expect(accepted('2.0.0-rc.1+sha.abc')).toBe(false);
 		expect(matchesFilter('1.2.3+build.4')).toBe(false);
+	});
+});
+
+/**
+ * Verifying a pull request on one npm and publishing on another is how the npm
+ * 12 change to `npm pack --json` reached the publish workflow without CI ever
+ * seeing it. The two run the same npm now, and this is what keeps them there.
+ */
+describe('the npm both workflows run', () => {
+	const pinStep = (workflow: Workflow) =>
+		Object.values(workflow.jobs)[0].steps.find((step) =>
+			/npm install --global npm@/.test(step.run ?? ''),
+		);
+
+	const ci = parse(ciSource as string) as Workflow;
+	const publish = parse(publishSource as string) as Workflow;
+
+	const version = (step: Step | undefined) =>
+		/npm install --global npm@(\S+)/.exec(step?.run ?? '')?.[1];
+
+	it('is pinned to one exact version in both', () => {
+		expect(version(pinStep(ci))).toBe(PINNED_NPM);
+		expect(version(pinStep(publish))).toBe(PINNED_NPM);
+	});
+
+	it('is never `latest`, which is what let the two drift apart', () => {
+		for (const workflow of [ci, publish]) {
+			for (const step of Object.values(workflow.jobs)[0].steps) {
+				expect(step.run ?? '').not.toMatch(/npm install --global npm@latest/);
+				expect(step.run ?? '').not.toMatch(/npm@latest/);
+			}
+		}
+	});
+
+	it('is installed before the dependencies it resolves', () => {
+		for (const workflow of [ci, publish]) {
+			const steps = Object.values(workflow.jobs)[0].steps;
+			const pinned = steps.findIndex((step) => /npm install --global npm@/.test(step.run ?? ''));
+			const install = steps.findIndex((step) => /^npm ci\b/m.test(step.run ?? ''));
+
+			expect(pinned).toBeGreaterThan(-1);
+			expect(install).toBeGreaterThan(pinned);
+		}
+	});
+
+	it('reports the toolchain without reporting anything else', () => {
+		for (const workflow of [ci, publish]) {
+			const report = Object.values(workflow.jobs)[0].steps.find(
+				(step) => step.name === 'Report the toolchain',
+			);
+
+			expect(report?.run?.trim().split('\n').map((line) => line.trim())).toEqual([
+				'node --version',
+				'npm --version',
+			]);
+		}
 	});
 });
 
