@@ -25,7 +25,7 @@ describe('reading a verified delivery', () => {
 				event: {
 					specVersion: SPEC_VERSION,
 					eventId: '0199c3f0-1a2b-7c3d-8e4f-000000000001',
-					eventKey: 'support.case.opened',
+					eventKey: 'comers.core.support.case.opened',
 					eventVersion: 1,
 					sequence: '9007199254740993',
 					occurredAt: '2026-09-11T07:05:30.000Z',
@@ -42,7 +42,7 @@ describe('reading a verified delivery', () => {
 				delivery: {
 					subscriptionId: '0199c3f0-1a2b-7c3d-8e4f-000000000002',
 					deliveryId: '0199c3f0-1a2b-7c3d-8e4f-000000000003',
-					deliveryAttempt: 0,
+					deliveryAttempt: 1,
 					timestamp: TIMESTAMP,
 				},
 			},
@@ -115,7 +115,7 @@ describe('forward compatibility', () => {
 		expect(result.ok && result.item.delivery).toEqual({
 			subscriptionId: '0199c3f0-1a2b-7c3d-8e4f-000000000002',
 			deliveryId: '0199c3f0-1a2b-7c3d-8e4f-000000000003',
-			deliveryAttempt: 0,
+			deliveryAttempt: 1,
 			timestamp: TIMESTAMP,
 		});
 	});
@@ -287,11 +287,11 @@ describe('delivery headers', () => {
 		const headers: Record<string, string | string[] | undefined> = {
 			'Content-Type': 'application/json',
 			'X-Comers-Event-Id': '0199c3f0-1a2b-7c3d-8e4f-000000000001',
-			'X-Comers-Event-Key': 'support.case.opened',
+			'X-Comers-Event-Key': 'comers.core.support.case.opened',
 			'X-COMERS-EVENT-VERSION': '1',
 			'x-comers-subscription-id': '0199c3f0-1a2b-7c3d-8e4f-000000000002',
 			'X-Comers-Delivery-Id': '0199c3f0-1a2b-7c3d-8e4f-000000000003',
-			'X-Comers-Delivery-Attempt': '0',
+			'X-Comers-Delivery-Attempt': '1',
 		};
 
 		expect(

@@ -29,7 +29,7 @@ export const envelopeJson = (overrides: Record<string, unknown> = {}): string =>
 	JSON.stringify({
 		specVersion: 'comers.v1',
 		eventId: '0199c3f0-1a2b-7c3d-8e4f-000000000001',
-		eventKey: 'support.case.opened',
+		eventKey: 'comers.core.support.case.opened',
 		eventVersion: 1,
 		sequence: '9007199254740993',
 		occurredAt: '2026-09-11T07:05:30.000Z',
@@ -52,11 +52,13 @@ export const deliveryHeaders = (
 ): Record<string, string | string[] | undefined> => ({
 	'content-type': 'application/json',
 	'x-comers-event-id': '0199c3f0-1a2b-7c3d-8e4f-000000000001',
-	'x-comers-event-key': 'support.case.opened',
+	'x-comers-event-key': 'comers.core.support.case.opened',
 	'x-comers-event-version': '1',
 	'x-comers-subscription-id': '0199c3f0-1a2b-7c3d-8e4f-000000000002',
 	'x-comers-delivery-id': '0199c3f0-1a2b-7c3d-8e4f-000000000003',
-	'x-comers-delivery-attempt': '0',
+	// Core Events raises the counter as it claims the delivery, so the first
+	// request is attempt 1. There is no valid delivery numbered 0.
+	'x-comers-delivery-attempt': '1',
 	'x-comers-timestamp': String(timestamp),
 	'x-correlation-id': '0199c3f0-1a2b-7c3d-8e4f-00000000000c',
 	...overrides,
