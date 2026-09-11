@@ -312,9 +312,88 @@ describe('delivery headers', () => {
 	});
 
 	it('refuses counters that are not strict integers', () => {
-		for (const value of ['1.0', '-1', '+1', 'one', '', '0x2']) {
+		for (const value of ['1.0', '-1', '+1', 'one', '', '0x2', '1e1', ' 1 1', '٣']) {
 			expect(read(envelopeJson(), { 'x-comers-delivery-attempt': value }).ok, value).toBe(false);
 		}
+	});
+
+	/**
+	 * Core Events raises `attempt_count` as it claims the delivery and reads it
+	 * back after the update, so the very first request already carries 1. A 0 is
+	 * a transport state the real dispatcher never emits.
+	 */
+	it('refuses attempt 0, which no real delivery carries', () => {
+		expect(read(envelopeJson(), { 'x-comers-delivery-attempt': '0' })).toEqual({
+			ok: false,
+			reason: 'malformed_delivery_headers',
+		});
+	});
+
+	it('accepts the first attempt and every retry after it', () => {
+		for (const attempt of ['1', '2', '7', '9007199254740991']) {
+			const result = read(envelopeJson(), { 'x-comers-delivery-attempt': attempt });
+
+			expect(result.ok, attempt).toBe(true);
+			expect(result.ok && result.item.delivery.deliveryAttempt).toBe(Number(attempt));
+		}
+	});
+
+	/**
+	 * The numbering model, as the dispatcher implements it.
+	 *
+	 * Within one run the counter only goes up: 1 for the first request, 2 for
+	 * the first automatic retry, and so on. Replaying a dead letter starts a new
+	 * run — the run counter rises and the attempt counter is reset — so the next
+	 * request says 1 again. The run is not sent to the receiver, so a 1 arriving
+	 * twice is indistinguishable here, which is exactly why deduplication
+	 * belongs on the event id.
+	 */
+	it('models attempts as 1 upwards within a run, and never 0', () => {
+		const attempts = (value: string) =>
+			read(envelopeJson(), { 'x-comers-delivery-attempt': value });
+
+		// First request of a run.
+		expect(attempts('1').ok).toBe(true);
+		// Its automatic retry.
+		expect(attempts('2').ok).toBe(true);
+		// After a replay the counter starts over, and 1 is valid again — the
+		// node cannot tell this apart from the first request, and does not try.
+		expect(attempts('1').ok).toBe(true);
+		// No run ever produces this.
+		expect(attempts('0').ok).toBe(false);
+	});
+
+	/**
+	 * Optional whitespace around a header value is part of HTTP and an
+	 * intermediary may introduce it, so it is tolerated. Whitespace inside the
+	 * number is a different thing entirely.
+	 */
+	it('tolerates whitespace around the value but not inside it', () => {
+		for (const value of [' 1', '1 ', '  1  ', '\t1\n']) {
+			const result = read(envelopeJson(), { 'x-comers-delivery-attempt': value });
+
+			expect(result.ok, JSON.stringify(value)).toBe(true);
+			expect(result.ok && result.item.delivery.deliveryAttempt).toBe(1);
+		}
+
+		for (const value of ['1 2', '1\t2', '1 0']) {
+			expect(read(envelopeJson(), { 'x-comers-delivery-attempt': value }).ok, value).toBe(false);
+		}
+	});
+
+	it('refuses an attempt past the safe integer range', () => {
+		// 2^53 and beyond: Number() rounds, so the value reaching the workflow
+		// would not be the one the dispatcher sent.
+		for (const attempt of ['9007199254740992', '9007199254740993', '99999999999999999999']) {
+			expect(read(envelopeJson(), { 'x-comers-delivery-attempt': attempt }).ok, attempt).toBe(
+				false,
+			);
+		}
+	});
+
+	it('holds event version to the same floor', () => {
+		expect(read(envelopeJson(), { 'x-comers-event-version': '0' }).ok).toBe(false);
+		expect(read(envelopeJson(), { 'x-comers-event-version': '-1' }).ok).toBe(false);
 	});
 
 	it('refuses a content type it cannot read', () => {
