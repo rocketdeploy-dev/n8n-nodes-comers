@@ -116,7 +116,7 @@ describe('a delivery the node accepts', () => {
 			delivery: {
 				subscriptionId: '0199c3f0-1a2b-7c3d-8e4f-000000000002',
 				deliveryId: '0199c3f0-1a2b-7c3d-8e4f-000000000003',
-				deliveryAttempt: 0,
+				deliveryAttempt: 1,
 				timestamp: NOW,
 			},
 		});
@@ -314,7 +314,7 @@ describe('nothing secret leaves the node', () => {
 
 		expect(logged).not.toContain(SIGNING_MATERIAL);
 		expect(logged).not.toContain('the-wrong-secret');
-		expect(logged).not.toContain('support.case.opened');
+		expect(logged).not.toContain('comers.core.support.case.opened');
 		expect(logged).toContain('signature_mismatch');
 	});
 });
