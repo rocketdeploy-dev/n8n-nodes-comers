@@ -1,0 +1,67 @@
+{
+  "_provenance": {
+    "producedBy": "comers-core-events src/modules/dispatcher/delivery-signature.ts (signDelivery, signatureHeader)",
+    "formula": "base64(HMAC-SHA256(secret, \"v1:\" + timestamp + \":\" + rawBody))",
+    "header": "signatures joined as \"v1=<signature>\" with a comma, in the order offered",
+    "note": "Static fixtures. This package has no build-time or run-time dependency on the Core Events repository.",
+    "secrets": "The `secret` fields are fixtures generated for these tests, with the shape Comers issues. They have never belonged to a subscription."
+  },
+  "vectors": [
+    {
+      "name": "canonical",
+      "description": "Signed by Core Events over the exact bytes of \"canonical\"",
+      "secret": "IM68OKPZoDziE_Qss65qwKTNRYQTE1uc9hwsc0e1uGQ",
+      "timestamp": 1788259530,
+      "rawBody": "{\"specVersion\":\"comers.v1\",\"eventId\":\"0199c3f0-1a2b-7c3d-8e4f-000000000001\",\"eventKey\":\"support.case.opened\",\"eventVersion\":1,\"sequence\":\"9007199254740993\",\"occurredAt\":\"2026-09-11T07:05:30.000Z\",\"producer\":\"comers-core-support\",\"scope\":{\"organizationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000a\",\"sellerId\":null,\"sellerStoreId\":null},\"subject\":{\"type\":\"support_case\",\"id\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000b\"},\"correlationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000c\",\"data\":{\"caseId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000b\",\"priority\":\"high\"}}",
+      "signature": "v1=1eOdNOjhizefzY8foiIr2e+DbotJ7oU62AqbP2rcLTc="
+    },
+    {
+      "name": "nonAscii",
+      "description": "Signed by Core Events over the exact bytes of \"nonAscii\"",
+      "secret": "IM68OKPZoDziE_Qss65qwKTNRYQTE1uc9hwsc0e1uGQ",
+      "timestamp": 1788259530,
+      "rawBody": "{\"specVersion\":\"comers.v1\",\"eventId\":\"0199c3f0-1a2b-7c3d-8e4f-000000000001\",\"eventKey\":\"support.case.opened\",\"eventVersion\":1,\"sequence\":\"9007199254740993\",\"occurredAt\":\"2026-09-11T07:05:30.000Z\",\"producer\":\"comers-core-support\",\"scope\":{\"organizationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000a\",\"sellerId\":null,\"sellerStoreId\":null},\"subject\":{\"type\":\"support_case\",\"id\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000b\"},\"correlationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000c\",\"data\":{\"subject\":\"Za\u017c\u00f3\u0142\u0107 g\u0119\u015bl\u0105 ja\u017a\u0144 \u2014 \u00fc \u00df \u65e5\u672c\u8a9e \ud83d\ude80\"}}",
+      "signature": "v1=ws/Hh7Pgi4c24PGvHoqNFO56yHI4KcKHcNzXZ4ImVWI="
+    },
+    {
+      "name": "unknownFields",
+      "description": "Signed by Core Events over the exact bytes of \"unknownFields\"",
+      "secret": "IM68OKPZoDziE_Qss65qwKTNRYQTE1uc9hwsc0e1uGQ",
+      "timestamp": 1788259530,
+      "rawBody": "{\"specVersion\":\"comers.v1\",\"eventId\":\"0199c3f0-1a2b-7c3d-8e4f-000000000001\",\"eventKey\":\"support.case.opened\",\"eventVersion\":1,\"sequence\":\"9007199254740993\",\"occurredAt\":\"2026-09-11T07:05:30.000Z\",\"producer\":\"comers-core-support\",\"scope\":{\"organizationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000a\",\"sellerId\":null,\"sellerStoreId\":null},\"subject\":{\"type\":\"support_case\",\"id\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000b\"},\"correlationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000c\",\"data\":{\"note\":\"kept\"},\"aFieldThisNodeHasNeverHeardOf\":{\"nested\":true}}",
+      "signature": "v1=A9ROxSDg3kVok/j5ubvpglBxqsA0z58ODEaNl2ezSNg="
+    },
+    {
+      "name": "prettyPrinted",
+      "description": "Signed by Core Events over the exact bytes of \"prettyPrinted\"",
+      "secret": "IM68OKPZoDziE_Qss65qwKTNRYQTE1uc9hwsc0e1uGQ",
+      "timestamp": 1788259530,
+      "rawBody": "{\n  \"specVersion\": \"comers.v1\",\n  \"eventId\": \"0199c3f0-1a2b-7c3d-8e4f-000000000001\",\n  \"eventKey\": \"support.case.opened\",\n  \"eventVersion\": 1,\n  \"sequence\": \"9007199254740993\",\n  \"occurredAt\": \"2026-09-11T07:05:30.000Z\",\n  \"producer\": \"comers-core-support\",\n  \"scope\": {\n    \"organizationId\": \"0199c3f0-1a2b-7c3d-8e4f-00000000000a\",\n    \"sellerId\": null,\n    \"sellerStoreId\": null\n  },\n  \"subject\": {\n    \"type\": \"support_case\",\n    \"id\": \"0199c3f0-1a2b-7c3d-8e4f-00000000000b\"\n  },\n  \"correlationId\": \"0199c3f0-1a2b-7c3d-8e4f-00000000000c\",\n  \"data\": {\n    \"priority\": \"high\"\n  }\n}",
+      "signature": "v1=SF/rJs3fTOf2Q4H6429fyVuv72WfbJsQ6JcW1ZBp2mQ="
+    },
+    {
+      "name": "reorderedFields",
+      "description": "Signed by Core Events over the exact bytes of \"reorderedFields\"",
+      "secret": "IM68OKPZoDziE_Qss65qwKTNRYQTE1uc9hwsc0e1uGQ",
+      "timestamp": 1788259530,
+      "rawBody": "{\"data\":{},\"correlationId\":null,\"subject\":{\"id\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000b\",\"type\":\"support_case\"},\"scope\":{\"sellerStoreId\":null,\"sellerId\":null,\"organizationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000a\"},\"producer\":\"comers-core-support\",\"occurredAt\":\"2026-09-11T07:05:30.000Z\",\"sequence\":\"9007199254740993\",\"eventVersion\":1,\"eventKey\":\"support.case.opened\",\"eventId\":\"0199c3f0-1a2b-7c3d-8e4f-000000000001\",\"specVersion\":\"comers.v1\"}",
+      "signature": "v1=jRa+gnejJCHmMyZhFB9V3FL03CmwO5QNGAwC4D1Z/gY="
+    },
+    {
+      "name": "rotationOverlapFirstMatches",
+      "description": "Two signatures offered during a secret rotation; the receiver still holds the older secret, which signed the first offer",
+      "secret": "IM68OKPZoDziE_Qss65qwKTNRYQTE1uc9hwsc0e1uGQ",
+      "timestamp": 1788259530,
+      "rawBody": "{\"specVersion\":\"comers.v1\",\"eventId\":\"0199c3f0-1a2b-7c3d-8e4f-000000000001\",\"eventKey\":\"support.case.opened\",\"eventVersion\":1,\"sequence\":\"9007199254740993\",\"occurredAt\":\"2026-09-11T07:05:30.000Z\",\"producer\":\"comers-core-support\",\"scope\":{\"organizationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000a\",\"sellerId\":null,\"sellerStoreId\":null},\"subject\":{\"type\":\"support_case\",\"id\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000b\"},\"correlationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000c\",\"data\":{\"caseId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000b\",\"priority\":\"high\"}}",
+      "signature": "v1=1eOdNOjhizefzY8foiIr2e+DbotJ7oU62AqbP2rcLTc=,v1=jSKjGYMqpru+Avibk8tJ+oAgbBn7+IepLr+emAlkVks="
+    },
+    {
+      "name": "rotationOverlapSecondMatches",
+      "description": "The same two offers, but the receiver has already stored the new secret, which signed the second offer",
+      "secret": "sO0CYnpBLDvGQbJ0zOwnxbg0AFiBcWHOAOX1dKbJ0aE",
+      "timestamp": 1788259530,
+      "rawBody": "{\"specVersion\":\"comers.v1\",\"eventId\":\"0199c3f0-1a2b-7c3d-8e4f-000000000001\",\"eventKey\":\"support.case.opened\",\"eventVersion\":1,\"sequence\":\"9007199254740993\",\"occurredAt\":\"2026-09-11T07:05:30.000Z\",\"producer\":\"comers-core-support\",\"scope\":{\"organizationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000a\",\"sellerId\":null,\"sellerStoreId\":null},\"subject\":{\"type\":\"support_case\",\"id\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000b\"},\"correlationId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000c\",\"data\":{\"caseId\":\"0199c3f0-1a2b-7c3d-8e4f-00000000000b\",\"priority\":\"high\"}}",
+      "signature": "v1=1eOdNOjhizefzY8foiIr2e+DbotJ7oU62AqbP2rcLTc=,v1=jSKjGYMqpru+Avibk8tJ+oAgbBn7+IepLr+emAlkVks="
+    }
+  ]
+}
