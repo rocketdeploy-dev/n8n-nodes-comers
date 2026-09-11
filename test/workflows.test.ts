@@ -79,85 +79,52 @@ const githubRefFilter = (filter: string): RegExp => {
 	return new RegExp(`^${pattern}$`);
 };
 
-const BOOTSTRAP_TAG = '0.1.0';
 /** One npm for both workflows; see "the npm both workflows run" below. */
 const PINNED_NPM = '12.0.2';
-const BOOTSTRAP_SECRET = 'NPM_BOOTSTRAP_TOKEN';
 
 describe('the publish workflow', () => {
 	const { source, workflow } = read(publishSource as string);
 	const job = workflow.jobs.publish;
 	const steps = job.steps;
 	const publishSteps = steps.filter((step) => step.run?.includes('npm publish'));
-	const bootstrap = publishSteps.find((step) => step.if?.includes('=='));
-	const trusted = publishSteps.find((step) => step.if?.includes('!='));
 
-	it('has exactly two publish paths', () => {
-		expect(publishSteps).toHaveLength(2);
-		expect(bootstrap).toBeDefined();
-		expect(trusted).toBeDefined();
+	it('has exactly one way to publish', () => {
+		// There was a second one once: a token-authenticated step that existed
+		// only because Trusted Publishing cannot be configured for a package
+		// that does not exist yet. 0.1.0 exists, so it is gone.
+		expect(publishSteps).toHaveLength(1);
 	});
 
-	it('takes one path or the other, never both and never neither', () => {
-		// Complementary conditions on the same expression: whatever the tag is,
-		// exactly one of these is true.
-		expect(bootstrap!.if).toBe(`github.ref_name == '${BOOTSTRAP_TAG}'`);
-		expect(trusted!.if).toBe(`github.ref_name != '${BOOTSTRAP_TAG}'`);
+	it('publishes publicly, with provenance', () => {
+		expect(publishSteps[0].run?.trim()).toBe('npm publish --access public --provenance');
 	});
 
-	it('publishes the same way on both paths', () => {
-		for (const step of publishSteps) {
-			expect(step.run).toContain('npm publish --access public --provenance');
-		}
+	it('runs unconditionally, with no special case for any one version', () => {
+		expect(publishSteps[0].if).toBeUndefined();
 	});
 
-	it('gives the bootstrap token to the bootstrap step and nothing else', () => {
-		expect(bootstrap!.env).toEqual({
-			NODE_AUTH_TOKEN: `\${{ secrets.${BOOTSTRAP_SECRET} }}`,
-		});
+	it('carries no credential into the publish step', () => {
+		expect(publishSteps[0].env).toBeUndefined();
+	});
 
-		// Not the workflow, not the job, not any other step: a credential that
-		// only one step may use must only be reachable from that step.
+	it('references no secret anywhere, so there is none to leak or rotate', () => {
+		expect(source).not.toMatch(/secrets\./);
+		expect(source).not.toMatch(/NODE_AUTH_TOKEN/);
+		expect(source).not.toMatch(/NPM_TOKEN/);
 		expect(workflow.env).toBeUndefined();
 		expect(job.env).toBeUndefined();
 
-		const elsewhere = steps
-			.filter((step) => step !== bootstrap)
-			.filter((step) => JSON.stringify(step.env ?? {}).includes(BOOTSTRAP_SECRET));
-
-		expect(elsewhere).toEqual([]);
+		for (const step of steps) {
+			expect(JSON.stringify(step.env ?? {})).not.toMatch(/TOKEN|secrets\./);
+		}
 	});
 
-	it('references no secret other than the bootstrap token', () => {
-		const secrets = [...source.matchAll(/secrets\.([A-Za-z_][A-Za-z0-9_]*)/g)].map(
-			(match) => match[1],
-		);
-
-		expect([...new Set(secrets)]).toEqual([BOOTSTRAP_SECRET]);
-	});
-
-	it('has no general NPM_TOKEN, which is what Trusted Publishing replaces', () => {
-		expect(source).not.toMatch(/secrets\.NPM_TOKEN\b/);
-		expect(source).not.toMatch(/NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/);
-	});
-
-	it('fails outright when the bootstrap token is missing, rather than trying OIDC', () => {
-		// Falling through to the other path could not work either — there is no
-		// Trusted Publisher on a package that does not exist — and would turn a
-		// setup mistake into an unrecognisable npm error.
-		expect(bootstrap!.run).toMatch(/if \[ -z "\$\{NODE_AUTH_TOKEN\}" \]; then/);
-		expect(bootstrap!.run).toContain('exit 1');
-		expect(bootstrap!.run).toContain(BOOTSTRAP_SECRET);
-	});
-
-	it('leaves every later release authenticating over OIDC alone', () => {
-		expect(trusted!.env).toBeUndefined();
+	it('authenticates over OIDC, which needs exactly these permissions', () => {
 		expect(job.permissions).toEqual({ 'id-token': 'write', contents: 'read' });
 	});
 
 	it('never prints a secret', () => {
 		for (const step of steps) {
-			expect(step.run ?? '').not.toMatch(/echo\s+.*NODE_AUTH_TOKEN/);
 			expect(step.run ?? '').not.toMatch(/echo\s+.*\$\{\{\s*secrets\./);
 		}
 	});
@@ -166,10 +133,8 @@ describe('the publish workflow', () => {
 		expect(job['runs-on']).toBe('ubuntu-latest');
 	});
 
-	it('verifies before it publishes', () => {
-		const scripts = steps.map((step) => step.run ?? '').join('\n');
-
-		for (const script of [
+	it('verifies everything before it publishes', () => {
+		const gates = [
 			'npm ci',
 			'npm run lint',
 			'npm run build',
@@ -177,15 +142,24 @@ describe('the publish workflow', () => {
 			'npm run scan',
 			'npm run pack:check',
 			'npm run check:tag',
-		]) {
-			expect(scripts, script).toContain(script);
-		}
-
-		const lastCheck = steps.findIndex((step) => step.run?.includes('npm run check:tag'));
+		];
+		const scripts = steps.map((step) => step.run ?? '').join('\n');
 		const firstPublish = steps.findIndex((step) => step.run?.includes('npm publish'));
 
-		expect(lastCheck).toBeGreaterThan(-1);
-		expect(firstPublish).toBeGreaterThan(lastCheck);
+		for (const gate of gates) {
+			expect(scripts, gate).toContain(gate);
+
+			const at = steps.findIndex((step) => (step.run ?? '').includes(gate));
+
+			expect(at, `${gate} must run before publishing`).toBeLessThan(firstPublish);
+		}
+	});
+
+	it('checks the tag against package.json immediately before publishing', () => {
+		const check = steps.findIndex((step) => step.run?.includes('npm run check:tag'));
+		const publish = steps.findIndex((step) => step.run?.includes('npm publish'));
+
+		expect(publish).toBe(check + 1);
 	});
 
 	it('never runs the local release process, which versions and tags', () => {
@@ -322,5 +296,6 @@ describe('the CI workflow', () => {
 
 	it('uses no secrets at all', () => {
 		expect(source).not.toContain('secrets.');
+		expect(source).not.toMatch(/NODE_AUTH_TOKEN|NPM_TOKEN/);
 	});
 });
