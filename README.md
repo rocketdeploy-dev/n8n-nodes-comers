@@ -324,9 +324,8 @@ changes the repository is the half that runs before it.
 
 Pushing a release tag starts `.github/workflows/publish.yml`, which re-runs
 lint, build, tests, the scanner and the tarball check, confirms the tag names
-the version in `package.json`, and publishes with npm provenance. Every release
-after the first authenticates over Trusted Publishing and uses no secret; the
-first one cannot, for the reason below.
+the version in `package.json`, and publishes with npm provenance over Trusted
+Publishing. It reads no secret — there is none to read.
 
 Publishing from a developer machine is refused outright — a package published
 that way carries no provenance attestation and could never become a verified
@@ -350,61 +349,30 @@ exclude a tag for carrying build metadata. Every tag the check accepts starts a
 run, so a valid release is never silently ignored; a malformed one that slips
 past the filter fails the check loudly instead.
 
-#### The first release (0.1.0)
-
-The first release is unlike every one after it, in two ways.
-
-It cannot come from `npm run release`, which bumps the version *before* tagging:
-`package.json` already says 0.1.0, so the next bump would be 0.1.1.
-
-And it cannot authenticate the way later releases do. **npm Trusted Publishing
-is configured on a package, so there is nothing to configure until the package
-exists.** The first publish is therefore the one and only time a token is
-involved — a short-lived granular token, used once and then destroyed.
-
-It still publishes from GitHub Actions with `--provenance`, like every other
-release. Only the authentication differs.
-
-1. Merge the PR to `main` with `package.json` at `0.1.0`.
-2. Create or confirm the `@comers` scope on npm.
-3. Create a granular access token allowed to publish a new public package in
-   that scope.
-4. Enable 2FA on the npm account and configure the token to npm's current
-   requirements for automated publishing.
-5. Save it as the GitHub Actions secret `NPM_BOOTSTRAP_TOKEN`.
-6. Tag the merge commit, changing no files:
-   ```sh
-   git tag -a 0.1.0 -m "Release 0.1.0"
-   ```
-7. Push the tag, and only the tag:
-   ```sh
-   git push origin 0.1.0
-   ```
-8. The workflow publishes 0.1.0 with `--provenance --access public`.
-9. Now that the package exists, add a Trusted Publisher to it — owner
-   `rocketdeploy-dev`, repository `n8n-nodes-comers`, workflow `publish.yml` —
-   and allow direct `npm publish`.
-10. Delete `NPM_BOOTSTRAP_TOKEN` from the repository's secrets.
-11. Revoke the granular token on npm.
-12. From then on every release authenticates over OIDC and uses no secret.
-
-Steps 10 and 11 are not housekeeping to get to later. Once Trusted Publishing
-is in place the token is a long-lived publish credential that no workflow path
-still needs, which is exactly what Trusted Publishing exists to remove.
-
-The workflow enforces the split: the bootstrap step runs only for the tag
-`0.1.0` and is the only place the secret is named, and it fails outright if the
-secret is missing rather than falling through to an OIDC path that could not
-work yet. Every other tag takes a publish step that references no secret at all.
-
-#### Every release after that
+#### Every release
 
 ```sh
 npm run release
 ```
 
 bumps the version, writes the changelog, commits, tags and pushes, which starts
-the workflow.
+the workflow. Publishing authenticates over Trusted Publishing alone: no token,
+no secret, nothing to rotate.
+
+#### How 0.1.0 came to exist
+
+Published on 11 September 2026, and the only release that did not follow the
+procedure above.
+
+npm Trusted Publishing is configured *on a package*, so there was nothing to
+configure until the package existed. 0.1.0 was therefore published from this
+same workflow, on a GitHub-hosted runner and with `--provenance`, but
+authenticated with a single-use granular token rather than OIDC.
+
+That token has since been revoked and the GitHub secret holding it deleted, and
+the Trusted Publisher is in place. Nothing in this repository reads a
+credential any more, and no release will need one again — which is why the
+bootstrap path is gone from `publish.yml` rather than kept around disabled.
 
 ## Licence
 
