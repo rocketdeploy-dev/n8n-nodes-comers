@@ -46,9 +46,17 @@ export interface DeliveryMetadata {
 	/** This delivery's identity, for matching against the Comers delivery log. Not covered by the signature. */
 	deliveryId: string;
 	/**
-	 * Which attempt this is. Delivery is at-least-once, so an attempt above
-	 * the first means an earlier one was not acknowledged — not that the event
-	 * happened twice. Not covered by the signature.
+	 * Which attempt this is **within its run**, counting from 1: Core Events
+	 * raises the counter as it claims the delivery, so the first request already
+	 * says 1 and each automatic retry says 2, 3 and so on.
+	 *
+	 * Replaying a dead letter starts a new run — the run counter goes up and the
+	 * attempt counter goes back to zero — so the next request is numbered 1
+	 * again. The run itself is not sent to the receiver, which means this number
+	 * is not unique across a delivery's life and cannot be used to tell a fresh
+	 * event from a repeat. Deduplicate on the event id instead.
+	 *
+	 * Not covered by the signature.
 	 */
 	deliveryAttempt: number;
 	/** The timestamp from the signed string, in whole seconds since the epoch. */
@@ -86,14 +94,27 @@ const readHeader = (
 
 const STRICT_INTEGER = /^(?:0|[1-9][0-9]*)$/;
 
-const parseInteger = (value: string | undefined): number | null => {
+/**
+ * A header that must be a whole number at or above `atLeast`.
+ *
+ * Surrounding whitespace is tolerated on purpose: optional whitespace around a
+ * header value is part of HTTP, and an intermediary may add or normalise it
+ * before the request reaches here. Refusing it would be refusing a delivery for
+ * something the sender did not do.
+ *
+ * Everything else is refused — whitespace *inside* the number, a leading sign,
+ * a decimal point, an exponent, hexadecimal, and anything outside the safe
+ * integer range, where `Number` would silently round to a value the dispatcher
+ * never sent.
+ */
+const parseCounter = (value: string | undefined, atLeast: number): number | null => {
 	if (value === undefined || !STRICT_INTEGER.test(value.trim())) {
 		return null;
 	}
 
 	const parsed = Number(value.trim());
 
-	return Number.isSafeInteger(parsed) ? parsed : null;
+	return Number.isSafeInteger(parsed) && parsed >= atLeast ? parsed : null;
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -220,8 +241,12 @@ export const readDelivery = ({
 		return { ok: false, reason: 'missing_delivery_headers' };
 	}
 
-	const eventVersion = parseInteger(rawEventVersion);
-	const deliveryAttempt = parseInteger(rawAttempt);
+	const eventVersion = parseCounter(rawEventVersion, 1);
+	// Core Events raises the attempt counter as it claims the delivery, so the
+	// very first request already carries 1. A 0 is a transport state the real
+	// dispatcher never emits, and accepting it would mean accepting a delivery
+	// nothing on the other side could have produced.
+	const deliveryAttempt = parseCounter(rawAttempt, 1);
 
 	if (eventVersion === null || deliveryAttempt === null) {
 		return { ok: false, reason: 'malformed_delivery_headers' };
