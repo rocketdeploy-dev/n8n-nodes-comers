@@ -37,8 +37,12 @@
 	"n8n": {
 		"n8nNodesApiVersion": 1,
 		"strict": true,
-		"credentials": [],
-		"nodes": []
+		"credentials": [
+			"dist/credentials/ComersWebhookSecretApi.credentials.js"
+		],
+		"nodes": [
+			"dist/nodes/ComersTrigger/ComersTrigger.node.js"
+		]
 	},
 	"devDependencies": {
 		"@n8n/node-cli": "^0.47.2",
