@@ -1,0 +1,28 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"module": "commonjs",
+		"moduleResolution": "node",
+		"target": "es2019",
+		"lib": ["es2019", "es2020", "es2022.error"],
+		"removeComments": true,
+		"useUnknownInCatchVariables": false,
+		"forceConsistentCasingInFileNames": true,
+		"noImplicitAny": true,
+		"noImplicitReturns": true,
+		"noUnusedLocals": true,
+		"strictNullChecks": true,
+		"preserveConstEnums": true,
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		// Deliberately not incremental. A cached build that decides `dist` is
+		// already current after `dist` was deleted emits only part of the
+		// package, and the missing half is only noticed when n8n cannot find a
+		// credential. A build this small is not worth that.
+		"declaration": true,
+		"sourceMap": true,
+		"skipLibCheck": true,
+		"outDir": "./dist/"
+	},
+	"include": ["credentials/**/*", "nodes/**/*", "nodes/**/*.json", "package.json"]
+}

@@ -1,0 +1,56 @@
+{
+	"name": "@comers/n8n-nodes-comers",
+	"version": "0.1.0",
+	"description": "Receive signed Comers domain events in n8n",
+	"license": "MIT",
+	"homepage": "https://github.com/rocketdeploy-dev/n8n-nodes-comers",
+	"keywords": [
+		"n8n-community-node-package",
+		"comers",
+		"webhook",
+		"trigger",
+		"events"
+	],
+	"author": {
+		"name": "Damian Nosowicz",
+		"email": "damian@nzt.li"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/rocketdeploy-dev/n8n-nodes-comers.git"
+	},
+	"bugs": {
+		"url": "https://github.com/rocketdeploy-dev/n8n-nodes-comers/issues"
+	},
+	"scripts": {
+		"build": "n8n-node build",
+		"build:watch": "tsc --watch",
+		"dev": "n8n-node dev",
+		"lint": "n8n-node lint",
+		"lint:fix": "n8n-node lint --fix",
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"files": [
+		"dist"
+	],
+	"n8n": {
+		"n8nNodesApiVersion": 1,
+		"strict": true,
+		"credentials": [],
+		"nodes": []
+	},
+	"devDependencies": {
+		"@n8n/node-cli": "^0.47.2",
+		"@n8n/scan-community-package": "^0.35.0",
+		"eslint": "9.32.0",
+		"prettier": "3.6.2",
+		"release-it": "^19.0.4",
+		"typescript": "5.9.2",
+		"vitest": "^4.1.9",
+		"yaml": "^2.9.0"
+	},
+	"peerDependencies": {
+		"n8n-workflow": "*"
+	}
+}
