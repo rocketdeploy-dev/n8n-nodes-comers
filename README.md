@@ -108,7 +108,7 @@ A verified delivery produces exactly one item, with two keys:
   "event": {
     "specVersion": "comers.v1",
     "eventId": "0199c3f0-1a2b-7c3d-8e4f-000000000001",
-    "eventKey": "support.case.opened",
+    "eventKey": "comers.core.support.case.opened",
     "eventVersion": 1,
     "sequence": "9007199254740993",
     "occurredAt": "2026-09-11T07:05:30.000Z",
@@ -125,7 +125,7 @@ A verified delivery produces exactly one item, with two keys:
   "delivery": {
     "subscriptionId": "0199c3f0-1a2b-7c3d-8e4f-000000000002",
     "deliveryId": "0199c3f0-1a2b-7c3d-8e4f-000000000003",
-    "deliveryAttempt": 0,
+    "deliveryAttempt": 1,
     "timestamp": 1788259530
   }
 }
@@ -190,14 +190,30 @@ retried, so the same `event.eventId` can arrive more than once — after a
 network timeout, after a replay from Business Settings, or after a slow
 response.
 
+`delivery.deliveryAttempt` counts from **1**, within a *run*:
+
+| | |
+| --- | --- |
+| first request of a run | `1` |
+| its automatic retries | `2`, `3`, … |
+| after you replay a dead letter | back to `1` — a replay starts a new run and resets the counter |
+
+The run number is **not** sent to the receiver. So attempt `1` can reach your
+workflow more than once, and nothing in the delivery metadata distinguishes the
+first request of the first run from the first request of a replay. That is a
+property of the protocol, not a gap in this node.
+
+Which means `delivery.deliveryAttempt` tells you whether Comers is retrying —
+useful for logging, or for backing off on a flaky downstream — but it is not an
+identifier and not a basis for deduplication.
+
 The node deliberately keeps no record of what it has seen. It is a stateless
 receiver, and a per-instance memory of event ids would be wrong the moment you
 ran a second n8n or restarted the first.
 
-Make the workflow idempotent on `event.eventId`: look it up before acting, or
-make the action itself safe to repeat. `delivery.deliveryAttempt` tells you
-which attempt you are looking at, but it is not a substitute — attempt 0 can
-still arrive twice.
+Deduplicate on **`event.eventId`**, which is stable across every attempt and
+every run: look it up before acting, or make the action itself safe to repeat.
+Nothing in `delivery` is a substitute for that.
 
 ## How a delivery is verified
 
@@ -214,6 +230,13 @@ The node recomputes this over the bytes that arrived, using Node's built-in
 `node:crypto` and a constant-time comparison, and only then parses the JSON. A
 delivery it cannot verify never reaches the workflow.
 
+One caveat on "only then parses": n8n parses an `application/json` body in its
+own middleware before any node runs. So a body that is not syntactically valid
+JSON is answered `422` by n8n and the trigger never sees it. The node still
+reads and verifies the raw bytes itself rather than trusting that parse — it
+does not depend on n8n having succeeded — but on current n8n the node's own
+"not JSON" path is unreachable through a webhook.
+
 The timestamp is inside the signed string rather than beside it, so a captured
 delivery cannot be replayed later under a fresh timestamp. The node accepts a
 timestamp within **±300 seconds** of its own clock. That window is fixed and
@@ -221,12 +244,19 @@ not configurable.
 
 ### Response codes, and what Comers does with them
 
-| The node answers | When | What Comers does |
-| --- | --- | --- |
-| `200` | The delivery verified and the workflow started | Marks the delivery delivered |
-| `401` | No signature, a signature that does not match, a signature scheme it does not understand, a malformed timestamp, or a timestamp outside the window | Treats it as a contract fault: **no retries**, the delivery goes straight to dead letters |
-| `400` | The signature verified, but the body is not JSON or not a valid Comers envelope | The same: **no retries**, straight to dead letters |
-| `500` | Something unexpected broke inside the node — most often a missing or unreadable credential | Retries on the normal schedule |
+| Answered by | Code | When | What Comers does |
+| --- | --- | --- | --- |
+| the node | `200` | The delivery verified and the workflow started | Marks the delivery delivered |
+| the node | `401` | No signature, a signature that does not match, a signature scheme it does not understand, a malformed timestamp, or a timestamp outside the window | Treats it as a contract fault: **no retries**, the delivery goes straight to dead letters |
+| the node | `400` | The signature verified and the node ran, but the JSON it decoded is not a valid Comers envelope — a missing protocol field, a field of the wrong type, or a header disagreeing with the signed body | The same: **no retries**, straight to dead letters |
+| the node | `500` | Something unexpected broke inside the node — most often a missing or unreadable credential | Retries on the normal schedule |
+| **n8n** | `422` | The body is not syntactically valid JSON. n8n parses the request before handing it to any node, so this ends the request **before the trigger runs at all** — the signature is never checked | The same as `400`: **no retries**, straight to dead letters |
+
+The `400` and `422` rows differ in who answers, not in what happens next: both
+are terminal 4xx to Comers. The distinction matters when you are reading a dead
+letter — a `400` means a delivery that was genuinely from Comers and genuinely
+malformed, while a `422` means something sent bytes that were not JSON, and
+nothing verified who sent them.
 
 A `401` or `400` is deliberate. A wrong secret and a skewed clock do not get
 better by being retried six times over the next day; they need somebody to fix
