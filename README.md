@@ -382,12 +382,52 @@ past the filter fails the check loudly instead.
 #### Every release
 
 ```sh
-npm run release
+npm run release -- 0.1.1
 ```
 
-bumps the version, writes the changelog, commits, tags and pushes, which starts
-the workflow. Publishing authenticates over Trusted Publishing alone: no token,
-no secret, nothing to rotate.
+The version is mandatory: `npm run release` with nothing after it refuses to
+run rather than choosing a patch bump for you.
+
+That command runs the same checks the publish pipeline does — lint, build,
+tests, the n8n scanner and the tarball check — then sets the version in
+`package.json` and `package-lock.json`, moves whatever is written under
+`## Unreleased` in `CHANGELOG.md` into a dated `## 0.1.1 — YYYY-MM-DD` section,
+makes one commit `chore: release 0.1.1`, creates the annotated tag `0.1.1`, and
+pushes both.
+
+Released sections are carried over byte for byte. Code blocks, indentation,
+blank runs and trailing spaces in earlier entries are left exactly as they were
+written: they are a published record, not this script's to reflow.
+
+**It never publishes.** Pushing the tag starts
+`.github/workflows/publish.yml`, which re-runs every check against the tagged
+commit, confirms the tag names the version in `package.json`, and publishes over
+Trusted Publishing — no token, no secret, nothing to rotate. The local command
+needs no npm credential and no GitHub token.
+
+If anything is not right — uncommitted changes to tracked files, the wrong
+branch, no upstream, nothing new since the last tag, an empty `## Unreleased`,
+or a section for that version already present — the release stops before any
+commit or tag exists.
+
+Every predictable refusal happens before a single file is written — the
+version-specific ones too, since release-it makes the version available to the
+`before:bump` hook. A refused release leaves the working tree exactly as it was.
+
+One thing worth knowing: "clean working tree" means no uncommitted changes to
+**tracked** files. Untracked files do not stop a release, and cannot reach it
+either — the release commit stages only tracked changes, and `npm run pack:check`
+asserts what the tarball contains.
+
+`n8n-node release` is not used here. It passes
+`--hooks.after:bump="npx auto-changelog -p"` as a command-line argument, and in
+release-it a command-line argument overrides configuration, so a project cannot
+opt out of it. Rebuilding the changelog from commit subjects is a sensible
+default for a generated changelog; this one is written by hand and says why
+things changed, so the project drives release-it itself and keeps the file. The
+settings live in the `release-it` block of `package.json`,
+`scripts/release.mjs` is the wrapper that makes the version mandatory, and
+`scripts/finalize-changelog.mjs` is the hook that checks and dates the notes.
 
 #### How 0.1.0 came to exist
 

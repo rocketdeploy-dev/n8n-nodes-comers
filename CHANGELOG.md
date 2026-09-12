@@ -43,6 +43,13 @@
   token that bootstrapped 0.1.0 — needed because a Trusted Publisher cannot be
   configured for a package that does not exist yet — has been revoked, its
   GitHub secret deleted, and its path removed from the publish workflow.
+- Releases are prepared by `npm run release -- <version>`, a mechanism this
+  repository owns. The version is mandatory and never inferred. The hand-written
+  `## Unreleased` notes are moved into a dated section, and earlier releases are
+  carried over byte for byte rather than rebuilt. The local command only commits
+  and tags; publishing stays OIDC-only in GitHub Actions, triggered by the tag.
+  `n8n-node release` is not used: it forces a changelog generated from commit
+  subjects, which does not fit this repository's hand-written one.
 
 ## 0.1.0 — 2026-09-11
 
