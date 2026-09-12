@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.1 — 2026-09-12
+
 ### Fixed
 
 - `delivery.deliveryAttempt` is now required to be a whole number of at least
