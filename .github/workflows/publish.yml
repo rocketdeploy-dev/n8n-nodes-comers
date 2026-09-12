@@ -2,8 +2,10 @@
 #
 # A release has two halves, and they run in different places on purpose:
 #
-#   1. `npm run release`, locally, bumps the version, writes the changelog,
-#      commits, tags and pushes. That is the half that changes the repository.
+#   1. `npm run release -- <version>`, locally, sets the version, moves the
+#      hand-written `## Unreleased` notes into a dated section, commits, tags
+#      and pushes. That is the half that changes the repository, and it never
+#      publishes anything.
 #   2. Here, the tag is the trigger. This workflow verifies the commit the tag
 #      points at and publishes it. It never versions, commits or tags — a
 #      pipeline that rewrites the repository it is publishing from cannot be
@@ -19,10 +21,18 @@
 #
 # ─── RELEASING ─────────────────────────────────────────────────────────────────
 #
-#   npm run release
+#   npm run release -- 0.1.1
 #
-# bumps the version, writes the changelog, commits, tags and pushes — which
-# starts this workflow.
+# The local command requires the version explicitly — it refuses to guess one —
+# runs the same checks this workflow does, updates package.json, the lockfile
+# and CHANGELOG.md, commits, tags and pushes, which starts this workflow. It
+# needs no npm credential and no GitHub token.
+#
+# The n8n CLI's own `n8n-node release` is not used: it forces
+# `npx auto-changelog -p` through a command-line argument, which overrides
+# config and would rebuild this project's hand-written changelog from commit
+# subjects. See the `release-it` block in package.json, scripts/release.mjs and
+# scripts/finalize-changelog.mjs.
 #
 # ─── TAG FORMAT ────────────────────────────────────────────────────────────────
 #
