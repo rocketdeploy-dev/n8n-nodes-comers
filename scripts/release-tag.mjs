@@ -30,12 +30,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-/**
- * Semantic versioning without build metadata, which is exactly what release-it
- * produces here: `0.1.0`, `1.2.3`, `2.0.0-rc.1`.
- */
-const RELEASE_VERSION =
-	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$/;
+import { RELEASE_VERSION } from './release-version.mjs';
 
 /**
  * @param {{ tag: string, version: string }} release
