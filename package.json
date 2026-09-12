@@ -33,7 +33,7 @@
 		"scan": "node scripts/scan-package.mjs",
 		"pack:check": "node scripts/check-tarball.mjs",
 		"check:tag": "node scripts/release-tag.mjs",
-		"release": "n8n-node release",
+		"release": "node scripts/release.mjs",
 		"prepublishOnly": "node scripts/prepublish.mjs"
 	},
 	"files": [
@@ -64,12 +64,34 @@
 	},
 	"release-it": {
 		"git": {
+			"requireBranch": "main",
+			"requireCleanWorkingDir": true,
+			"requireUpstream": true,
+			"requireCommits": true,
+			"commit": true,
+			"commitMessage": "chore: release ${version}",
+			"tag": true,
 			"tagName": "${version}",
 			"tagAnnotation": "Release ${version}",
-			"commitMessage": "chore: release ${version}"
+			"push": true
 		},
 		"npm": {
 			"publish": false
+		},
+		"github": {
+			"release": false
+		},
+		"hooks": {
+			"before:init": [
+				"node scripts/finalize-changelog.mjs --check",
+				"npm run lint",
+				"npm run build",
+				"npm test",
+				"npm run scan",
+				"npm run pack:check"
+			],
+			"before:bump": "node scripts/finalize-changelog.mjs --check-version ${version}",
+			"after:bump": "node scripts/finalize-changelog.mjs"
 		}
 	}
 }
