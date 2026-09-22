@@ -1,71 +1,51 @@
 /**
- * The Core Events delivery envelope, and the one item a verified delivery
- * becomes.
+ * The Comers delivery payload inside a verified `jws-es256-v1` delivery, and
+ * the one item it becomes.
  *
- * This runs only after `authenticateDelivery` has proved the bytes are
- * genuine, so anything wrong from here on is a contract fault by a sender that
- * holds the right secret — not an intruder.
+ * This runs only after the signature has been verified with a key Comers
+ * publishes, so everything here is signed: the event, the organization it
+ * belongs to, and the binding to one subscription, delivery, attempt and time.
  *
- * The signature covers `v1:<timestamp>:<raw body>`. The delivery headers are
- * outside it; they are checked against the authenticated body instead, which
- * is what stops one being changed in flight without the other.
- *
- * The envelope is validated, never rewritten. Fields Core Events adds later
- * flow through untouched, and the domain payload under `data` is not inspected
- * at all, so a new event type or a new field on an existing one does not need
- * a release of this node.
+ * The event envelope is validated, never rewritten. Fields Comers adds later
+ * flow through untouched, and neither the event key nor the domain payload
+ * under `data` is checked against a list, so a new event type — or a new field
+ * on an existing one — needs no release of this node.
  */
 
 /** The only envelope version this node understands. */
 export const SPEC_VERSION = 'comers.v1';
 
-export type EnvelopeFailure =
-	| 'unsupported_content_type'
-	| 'missing_delivery_headers'
-	| 'malformed_delivery_headers'
-	| 'body_not_json'
-	| 'body_not_an_object'
+/** How far a delivery's signed timestamp may be from this clock. */
+export const TIMESTAMP_TOLERANCE_SECONDS = 300;
+
+export type PayloadFailure =
+	| 'payload_shape'
 	| 'unsupported_spec_version'
 	| 'malformed_envelope'
-	| 'headers_contradict_envelope';
+	| 'malformed_delivery'
+	| 'other_subscription'
+	| 'other_organization'
+	| 'stale_timestamp';
 
-/**
- * How this delivery reached the workflow.
- *
- * These are transport facts, read from the request headers. Only `timestamp`
- * is covered by the signature — it is part of the signed string. The other
- * three appear nowhere in the body, so the HMAC does not bind them: they are
- * protected by the HTTPS connection, not by the application-level signature.
- *
- * Treat them as routing and bookkeeping, never as evidence. What makes the
- * domain fact authentic is the signed body together with its signed timestamp.
- */
+/** How this delivery reached the workflow. All of it is covered by the signature. */
 export interface DeliveryMetadata {
-	/** Which subscription this delivery belongs to. Not covered by the signature. */
+	/** The subscription this delivery was signed for; always this workflow's own. */
 	subscriptionId: string;
-	/** This delivery's identity, for matching against the Comers delivery log. Not covered by the signature. */
+	/** This delivery's identity, for matching against the Comers delivery log. */
 	deliveryId: string;
 	/**
-	 * Which attempt this is **within its run**, counting from 1: Core Events
-	 * raises the counter as it claims the delivery, so the first request already
-	 * says 1 and each automatic retry says 2, 3 and so on.
-	 *
-	 * Replaying a dead letter starts a new run — the run counter goes up and the
-	 * attempt counter goes back to zero — so the next request is numbered 1
-	 * again. The run itself is not sent to the receiver, which means this number
-	 * is not unique across a delivery's life and cannot be used to tell a fresh
-	 * event from a repeat. Deduplicate on the event id instead.
-	 *
-	 * Not covered by the signature.
+	 * Which attempt this is within its run, counting from 1. A replayed dead
+	 * letter starts again at 1, so this is not unique: deduplicate on
+	 * `event.eventId`.
 	 */
 	deliveryAttempt: number;
-	/** The timestamp from the signed string, in whole seconds since the epoch. */
+	/** When this attempt was signed, in whole seconds since the epoch. */
 	timestamp: number;
 }
 
 /** The one item a verified delivery becomes. */
 export interface DeliveryItem {
-	/** The Comers envelope, as the authenticated bytes decoded. */
+	/** The Comers event envelope, exactly as signed. */
 	event: Record<string, unknown>;
 	/** How this delivery reached the workflow. */
 	delivery: DeliveryMetadata;
@@ -73,49 +53,7 @@ export interface DeliveryItem {
 
 export type DeliveryResult =
 	| { ok: true; item: DeliveryItem }
-	| { ok: false; reason: EnvelopeFailure };
-
-const readHeader = (
-	headers: Record<string, string | string[] | undefined>,
-	name: string,
-): string | undefined => {
-	const wanted = name.toLowerCase();
-
-	for (const [key, value] of Object.entries(headers)) {
-		// A repeated header arrives as an array, which leaves the intended
-		// value ambiguous. None of these headers may legitimately repeat.
-		if (key.toLowerCase() === wanted) {
-			return typeof value === 'string' ? value : undefined;
-		}
-	}
-
-	return undefined;
-};
-
-const STRICT_INTEGER = /^(?:0|[1-9][0-9]*)$/;
-
-/**
- * A header that must be a whole number at or above `atLeast`.
- *
- * Surrounding whitespace is tolerated on purpose: optional whitespace around a
- * header value is part of HTTP, and an intermediary may add or normalise it
- * before the request reaches here. Refusing it would be refusing a delivery for
- * something the sender did not do.
- *
- * Everything else is refused — whitespace *inside* the number, a leading sign,
- * a decimal point, an exponent, hexadecimal, and anything outside the safe
- * integer range, where `Number` would silently round to a value the dispatcher
- * never sent.
- */
-const parseCounter = (value: string | undefined, atLeast: number): number | null => {
-	if (value === undefined || !STRICT_INTEGER.test(value.trim())) {
-		return null;
-	}
-
-	const parsed = Number(value.trim());
-
-	return Number.isSafeInteger(parsed) && parsed >= atLeast ? parsed : null;
-};
+	| { ok: false; reason: PayloadFailure };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -133,7 +71,7 @@ const isOptionalScopeId = (scope: Record<string, unknown>, key: string): boolean
 /** A bigint rendered as decimal digits, because JSON numbers lose precision past 2^53-1. */
 const DECIMAL_STRING = /^[0-9]+$/;
 
-const isValidEnvelope = (envelope: Record<string, unknown>): boolean => {
+export const isValidEnvelope = (envelope: Record<string, unknown>): boolean => {
 	if (
 		!isNonEmptyString(envelope.eventId) ||
 		!isNonEmptyString(envelope.eventKey) ||
@@ -190,108 +128,82 @@ const isValidEnvelope = (envelope: Record<string, unknown>): boolean => {
 	return 'data' in envelope;
 };
 
+const DELIVERY_KEYS = 'deliveryAttempt,deliveryId,subscriptionId,timestamp';
+
 /**
- * Turns an authenticated delivery into the single item the workflow receives.
- *
- * The item has exactly two keys:
- *
- *   `event`    exactly the value `JSON.parse` returned for the authenticated
- *              bytes — no field renamed, removed, added or overwritten. The
- *              bytes themselves were verified byte for byte; this is the value
- *              they decode to, and re-serialising it would not necessarily
- *              reproduce them. Nothing here promises that it would.
- *   `delivery` transport facts, which live in headers rather than in the
- *              envelope, plus the timestamp that was verified.
- *
- * Keeping them apart is what makes the forward-compatibility promise real. If
- * the two were merged, a field Core Events adds to the envelope one day could
- * collide with a transport field and be silently shadowed — and `delivery` is
- * exactly the name that collision would land on.
+ * Turns the verified payload into the item the workflow receives, after
+ * checking that it was signed for this workflow's subscription (and, when the
+ * node knows it, organization) and that it is recent.
  */
 export const readDelivery = ({
-	headers,
-	rawBody,
-	timestamp,
+	payload,
+	subscriptionId,
+	organizationId,
+	nowSeconds,
 }: {
-	headers: Record<string, string | string[] | undefined>;
-	rawBody: Buffer;
-	timestamp: number;
+	payload: unknown;
+	subscriptionId: string;
+	organizationId?: string;
+	nowSeconds: number;
 }): DeliveryResult => {
-	const contentType = readHeader(headers, 'content-type');
-
-	if (contentType === undefined || !contentType.startsWith('application/json')) {
-		return { ok: false, reason: 'unsupported_content_type' };
+	if (!isObject(payload) || Object.keys(payload).sort().join() !== 'delivery,event') {
+		return { ok: false, reason: 'payload_shape' };
 	}
 
-	const eventId = readHeader(headers, 'x-comers-event-id');
-	const eventKey = readHeader(headers, 'x-comers-event-key');
-	const subscriptionId = readHeader(headers, 'x-comers-subscription-id');
-	const deliveryId = readHeader(headers, 'x-comers-delivery-id');
-	const rawEventVersion = readHeader(headers, 'x-comers-event-version');
-	const rawAttempt = readHeader(headers, 'x-comers-delivery-attempt');
+	const { event, delivery } = payload;
 
 	if (
-		!isNonEmptyString(eventId) ||
-		!isNonEmptyString(eventKey) ||
-		!isNonEmptyString(subscriptionId) ||
-		!isNonEmptyString(deliveryId) ||
-		rawEventVersion === undefined ||
-		rawAttempt === undefined
+		!isObject(delivery) ||
+		Object.keys(delivery).sort().join() !== DELIVERY_KEYS ||
+		!isNonEmptyString(delivery.subscriptionId) ||
+		!isNonEmptyString(delivery.deliveryId) ||
+		!Number.isSafeInteger(delivery.deliveryAttempt) ||
+		(delivery.deliveryAttempt as number) < 1 ||
+		!Number.isSafeInteger(delivery.timestamp) ||
+		(delivery.timestamp as number) < 1
 	) {
-		return { ok: false, reason: 'missing_delivery_headers' };
+		return { ok: false, reason: 'malformed_delivery' };
 	}
 
-	const eventVersion = parseCounter(rawEventVersion, 1);
-	// Core Events raises the attempt counter as it claims the delivery, so the
-	// very first request already carries 1. A 0 is a transport state the real
-	// dispatcher never emits, and accepting it would mean accepting a delivery
-	// nothing on the other side could have produced.
-	const deliveryAttempt = parseCounter(rawAttempt, 1);
-
-	if (eventVersion === null || deliveryAttempt === null) {
-		return { ok: false, reason: 'malformed_delivery_headers' };
+	// Signed for a subscription, so it is refused anywhere else: a delivery
+	// captured from one workflow cannot be replayed into another.
+	if (delivery.subscriptionId !== subscriptionId) {
+		return { ok: false, reason: 'other_subscription' };
 	}
 
-	let parsed: unknown;
-
-	try {
-		parsed = JSON.parse(rawBody.toString('utf8'));
-	} catch {
-		return { ok: false, reason: 'body_not_json' };
+	if (Math.abs(nowSeconds - (delivery.timestamp as number)) > TIMESTAMP_TOLERANCE_SECONDS) {
+		return { ok: false, reason: 'stale_timestamp' };
 	}
 
-	if (!isObject(parsed)) {
-		return { ok: false, reason: 'body_not_an_object' };
-	}
-
-	if (parsed.specVersion !== SPEC_VERSION) {
-		return { ok: false, reason: 'unsupported_spec_version' };
-	}
-
-	if (!isValidEnvelope(parsed)) {
+	if (!isObject(event)) {
 		return { ok: false, reason: 'malformed_envelope' };
 	}
 
-	// The routing headers are NOT in the signed material: the HMAC covers
-	// `v1:<timestamp>:<raw body>` and nothing else. What binds them is this
-	// comparison — the body is authenticated, and a header that disagrees with
-	// the authenticated body gets the delivery refused. So a header changed in
-	// flight cannot steer a workflow onto an event the body does not describe,
-	// even though the header itself carries no signature of its own.
-	if (
-		parsed.eventId !== eventId ||
-		parsed.eventKey !== eventKey ||
-		parsed.eventVersion !== eventVersion
-	) {
-		return { ok: false, reason: 'headers_contradict_envelope' };
+	if (event.specVersion !== SPEC_VERSION) {
+		return { ok: false, reason: 'unsupported_spec_version' };
 	}
 
-	const delivery: DeliveryMetadata = {
-		subscriptionId,
-		deliveryId,
-		deliveryAttempt,
-		timestamp,
-	};
+	if (!isValidEnvelope(event)) {
+		return { ok: false, reason: 'malformed_envelope' };
+	}
 
-	return { ok: true, item: { event: parsed, delivery } };
+	if (
+		organizationId !== undefined &&
+		(event.scope as Record<string, unknown>).organizationId !== organizationId
+	) {
+		return { ok: false, reason: 'other_organization' };
+	}
+
+	return {
+		ok: true,
+		item: {
+			event,
+			delivery: {
+				subscriptionId: delivery.subscriptionId,
+				deliveryId: delivery.deliveryId,
+				deliveryAttempt: delivery.deliveryAttempt as number,
+				timestamp: delivery.timestamp as number,
+			},
+		},
+	};
 };

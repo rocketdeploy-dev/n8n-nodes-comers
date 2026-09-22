@@ -1,7 +1,7 @@
 {
 	"name": "@comers/n8n-nodes-comers",
 	"version": "0.1.1",
-	"description": "Receive signed Comers domain events in n8n",
+	"description": "Receive Comers domain events in n8n, with automatic subscription management",
 	"license": "MIT",
 	"homepage": "https://github.com/rocketdeploy-dev/n8n-nodes-comers",
 	"keywords": [
@@ -43,7 +43,7 @@
 		"n8nNodesApiVersion": 1,
 		"strict": true,
 		"credentials": [
-			"dist/credentials/ComersWebhookSecretApi.credentials.js"
+			"dist/credentials/ComersApi.credentials.js"
 		],
 		"nodes": [
 			"dist/nodes/ComersTrigger/ComersTrigger.node.js"
