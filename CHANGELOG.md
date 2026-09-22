@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-09-22
+
 This release replaces the manual HMAC setup. No installed workflow depends on
 it, so there is no compatibility mode.
 

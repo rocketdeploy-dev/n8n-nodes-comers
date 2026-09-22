@@ -1,6 +1,6 @@
 {
 	"name": "@comers/n8n-nodes-comers",
-	"version": "0.1.1",
+	"version": "0.2.0",
 	"description": "Receive Comers domain events in n8n, with automatic subscription management",
 	"license": "MIT",
 	"homepage": "https://github.com/rocketdeploy-dev/n8n-nodes-comers",
