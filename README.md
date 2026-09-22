@@ -1,107 +1,130 @@
 # n8n-nodes-comers
 
-Receive signed [Comers](https://github.com/rocketdeploy-dev) domain events in
-[n8n](https://n8n.io).
+Receive [Comers](https://github.com/rocketdeploy-dev) domain events in
+[n8n](https://n8n.io). Publishing a workflow subscribes it in Comers;
+unpublishing it archives the subscription.
 
 This package contains one trigger node and one credential:
 
 | | |
 | --- | --- |
-| **Comers Trigger** | Starts a workflow when Comers delivers an event. Verifies the delivery's signature before the workflow runs. |
-| **Comers Webhook Secret API** | Holds the signing secret for one webhook subscription. Nothing is ever sent to Comers with it. |
+| **Comers Trigger** | Creates the workflow's own Comers event subscription when the workflow is published, verifies every delivery against Comers' public keys before the workflow runs, and archives the subscription when the workflow is unpublished or deleted. |
+| **Comers API** | A Comers machine integration: the Comers URL, a client ID and a client secret. |
 
-The node only receives. It never creates, changes or removes a subscription in
-Comers — you do that yourself in Business Settings, as described below.
+There is nothing to copy between Comers and n8n by hand: no webhook URL to
+paste into Comers and no signing secret to paste into n8n.
 
 ## Installation
 
 In n8n, go to **Settings → Community nodes → Install** and enter
 `@comers/n8n-nodes-comers`.
 
-## Setting up a subscription
+## Setting up
 
-Comers and n8n each hold one half of the setup, and neither can complete it
-alone: n8n produces the URL, Comers produces the secret.
+### 1. Create a machine integration in Comers
 
-### 1. Add the trigger
+In Comers, create an API integration for this n8n and grant it the scope
+**`comers.core.events.subscriptions.manage-own`**. Comers shows the client ID
+and the client secret; the secret is shown once.
 
-Add a **Comers Trigger** node to a new workflow. It takes no parameters.
+### 2. Add the credential
 
-### 2. Pick the URL you are going to register
+In n8n, create a **Comers API** credential:
 
-The trigger shows two webhook URLs, and they are not interchangeable.
+| Field | Value |
+| --- | --- |
+| **Comers URL** | The public HTTPS origin of your Comers installation, without a path |
+| **Client ID** | The integration's client ID |
+| **Client Secret** | The integration's client secret |
 
-- The **test URL** only listens while you have clicked *Listen for test event*
-  in the editor. Deliveries appear in the editor so you can see the event
-  shape. Between listens, this URL does not exist and Comers gets a 404.
-- The **production URL** works whenever the workflow is published. Executions
-  appear in the executions list.
+The credential test asks Comers for a token with exactly the scope above, so it
+tells you apart a wrong client ID or secret (*Comers did not accept this client
+ID and secret*) and a missing scope (*… needs the scope
+comers.core.events.subscriptions.manage-own*).
 
-Use the test URL while you are building, then register the production URL when
-you publish. A subscription's target URL cannot be changed afterwards, so a
-subscription registered against a test URL has to be archived and recreated.
+### 3. Add the trigger and choose events
 
-### 3. Create the subscription in Comers
+Add **Comers Trigger**, pick the credential and list the events:
 
-In Comers **Business Settings → Webhook subscriptions**, create a subscription:
+- **Event Key** — any key from the Comers event catalog, for example
+  `comers.core.support.case.opened`. There is no fixed list in the node: an
+  event Comers adds later works without a new release of this package.
+- **Event Version** — the payload version, 1 unless the catalog says otherwise.
 
-- paste the webhook URL you copied from the trigger,
-- choose the events you want,
-- choose the scope.
+**Subscription Name** is optional; by default it is the workflow and node
+names. The node always appends a short identifier, `[n8n <id>]`, which it uses
+to find its own subscription again.
 
-Comers shows the **signing secret once**, on this screen, and can never show it
-again. Copy it now. If you lose it, rotate the secret in Business Settings to
-get a new one.
+### 4. Publish the workflow
 
-### 4. Store the secret in the credential
+Publishing creates the subscription in Comers for the workflow's **production**
+webhook URL. Unpublishing or deleting the workflow archives it; publishing
+again creates a new one. Changing the events or the name and publishing again
+updates the existing subscription.
 
-Back in n8n, create a **Comers Webhook Secret API** credential and paste the
-secret into **Signing Secret**. Select it on the trigger node.
+"Listen for test event" in the editor does not register anything: Comers only
+delivers to published workflows, and those deliveries appear in the executions
+list.
 
-One credential belongs to one subscription. Two subscriptions have two secrets,
-so they need two credentials.
+n8n registers the webhook just after the workflow is published. If Comers
+cannot be reached or refuses (for example because the integration lacks the
+scope), n8n shows the error on the workflow and the subscription is not
+created; fix the cause and publish again.
 
-The credential's *Test* button checks only that the value has the shape Comers
-issues — 43 characters of base64url. It sends nothing to Comers, and it cannot
-tell you whether this is the secret for *this* subscription. The first delivery
-tells you that.
+## What the node stores
 
-### 5. Publish the workflow
+The node keeps, in the workflow's static data, only what it needs to find and
+verify its subscription — none of it is secret:
 
-Until the workflow is published, the production URL answers 404. Comers retries
-a 404 for a while, then suspends the subscription, so publish before you expect
-deliveries.
+| Key | |
+| --- | --- |
+| `schemaVersion` | The layout of this state |
+| `registrationId` | A stable identifier of this workflow and node, also in the subscription name |
+| `subscriptionId` | The subscription Comers created |
+| `jwksUri` | Where Comers publishes the keys that verify its deliveries |
+| `signatureProfile` | Always `jws-es256-v1` |
+| `organizationId` | The integration's organization, which every delivery must be signed for |
 
-## Rotating the secret
+n8n stores static data unencrypted and includes it in workflow exports, which
+is exactly why nothing secret goes there. The client secret stays in the
+encrypted credential and is only ever sent to the Comers token endpoint. The
+access token lives in memory until shortly before it expires; after a restart
+the node simply asks for a new one. Comers' public keys are cached in memory
+for as long as Comers says they may be.
 
-When you rotate a subscription's secret in Business Settings, Comers signs each
-delivery **twice** for the length of the overlap window: once with the old
-secret and once with the new one. The node accepts a delivery if either
-signature matches, so deliveries keep arriving while you paste the new secret
-into the credential.
+## The lifecycle, exactly
 
-Update the credential before the overlap window closes. After it closes, only
-the new secret is offered.
+**Publish** — n8n asks the node whether its subscription exists:
 
-## Stopping
+- with a recorded `subscriptionId`, the node reads it. Found and pointing at
+  this workflow's URL: it exists (its name and events are brought up to date).
+  Archived, or pointing at another URL: it is retired and a new one is created.
+  Not found (404): the stale ID is forgotten.
+- with no usable ID, the node looks through the integration's own
+  subscriptions for exactly one that is not archived, uses this workflow's URL
+  and carries this node's identifier. That recovers a subscription whose
+  creation succeeded in Comers but whose answer never reached n8n, instead of
+  creating a second one. Two matches are an error, never a guess, and a
+  subscription that merely looks similar is never adopted.
+- any other answer from Comers is an error. It is never read as "does not
+  exist", because that would create a duplicate.
 
-**Deactivating or deleting the workflow does not stop Comers.** This node has
-no credential that would let it talk to the Comers API, so it cannot suspend
-anything on your behalf. Comers keeps delivering, receives 404s, and eventually
-suspends the subscription itself after repeated failures.
+When nothing exists, the node creates a `jws-es256-v1` subscription and records
+it.
 
-If you mean to stop: **suspend the subscription in Business Settings first**,
-then deactivate the workflow. Resume it in Business Settings when you are ready
-again.
+**Unpublish or delete** — the node archives exactly the recorded subscription.
+The state is cleared only when Comers confirms (204) or no longer knows it
+(404); on any other answer it is kept, so n8n can retry the cleanup.
 
 ## What the workflow receives
 
-A verified delivery produces exactly one item, with two keys:
+A verified delivery produces exactly one item, with two keys, all of it covered
+by the signature:
 
-- **`event`** — the Comers envelope, exactly as it decoded from the
-  authenticated bytes. Nothing is renamed, removed, added or overwritten.
-- **`delivery`** — how this delivery reached you. These facts travel in headers
-  rather than in the envelope.
+- **`event`** — the Comers event envelope, exactly as signed. Nothing is
+  renamed, removed, added or overwritten, and fields Comers adds later come
+  through untouched.
+- **`delivery`** — the delivery it came in.
 
 ```json
 {
@@ -111,7 +134,7 @@ A verified delivery produces exactly one item, with two keys:
     "eventKey": "comers.core.support.case.opened",
     "eventVersion": 1,
     "sequence": "9007199254740993",
-    "occurredAt": "2026-09-11T07:05:30.000Z",
+    "occurredAt": "2026-09-22T07:05:30.000Z",
     "producer": "comers-core-support",
     "scope": {
       "organizationId": "0199c3f0-1a2b-7c3d-8e4f-00000000000a",
@@ -119,8 +142,8 @@ A verified delivery produces exactly one item, with two keys:
       "sellerStoreId": null
     },
     "subject": { "type": "support_case", "id": "0199c3f0-1a2b-7c3d-8e4f-00000000000b" },
-    "correlationId": "0199c3f0-1a2b-7c3d-8e4f-00000000000c",
-    "data": { "caseId": "0199c3f0-1a2b-7c3d-8e4f-00000000000b", "priority": "high" }
+    "correlationId": null,
+    "data": { "priority": "high" }
   },
   "delivery": {
     "subscriptionId": "0199c3f0-1a2b-7c3d-8e4f-000000000002",
@@ -131,192 +154,78 @@ A verified delivery produces exactly one item, with two keys:
 }
 ```
 
-So in expressions:
-
-```
-{{ $json.event.eventId }}
-{{ $json.event.eventKey }}
-{{ $json.event.data }}
-{{ $json.delivery.deliveryAttempt }}
-```
-
-The two are kept apart so that neither can shadow the other. If they were
-merged and Comers later added a field of its own named `delivery`, it would
-silently disappear behind this node's transport metadata. Under `event`,
-anything Comers adds arrives untouched.
-
-What is verified byte for byte is the **request body**, before anything is
-parsed. `event` is the value those bytes decode to. The node changes none of
-it, but a JSON value is not a byte string: re-serialising `event` will not
-necessarily reproduce the bytes that were signed, and nothing here promises it
-would. If you need to re-verify a signature, you need the original bytes, not
-this item.
-
-### What the signature actually covers
-
-The signature is computed over `v1:<timestamp>:<raw body>`. That means:
-
-- Everything under **`event`** is authenticated, as is `delivery.timestamp`.
-- **`delivery.subscriptionId`, `delivery.deliveryId` and
-  `delivery.deliveryAttempt` are not.** They travel in headers, appear nowhere
-  in the body, and the HMAC does not bind them. HTTPS protects them in transit;
-  the application-level signature does not.
-
-So treat those three as routing and bookkeeping — matching a delivery against
-the Comers delivery log, or telling a first attempt from a retry. Do not build
-an authorization or authenticity decision on them. What makes the domain fact
-genuine is the signed body together with its signed timestamp.
-
-The routing headers `X-Comers-Event-Id`, `-Event-Key` and `-Event-Version` are
-outside the signature too. The node compares each of them against the
-authenticated body and refuses the delivery when they disagree, so a header
-altered in flight cannot point a workflow at an event the body does not
-describe.
-
-Two things about the payload:
-
-- `sequence` is a **decimal string**, not a number. It is a 64-bit counter, and
-  JSON numbers lose precision past 2^53−1. Compare it as a string, or parse it
-  as a `BigInt`.
-- `event.data` is the domain payload and is passed through untouched. The node
-  validates the common envelope — the protocol fields and their types — not the
-  contents of `data`, so Comers can add a field or a whole new event type
-  without this node needing a release.
+`sequence` is a decimal string because it is a 64-bit counter. The JWS itself,
+the token and the credential never appear in the output or in the logs.
 
 ### Write idempotent workflows
 
-Delivery is **at-least-once**. A delivery that Comers could not confirm is
-retried, so the same `event.eventId` can arrive more than once — after a
-network timeout, after a replay from Business Settings, or after a slow
-response.
-
-`delivery.deliveryAttempt` counts from **1**, within a *run*:
-
-| | |
-| --- | --- |
-| first request of a run | `1` |
-| its automatic retries | `2`, `3`, … |
-| after you replay a dead letter | back to `1` — a replay starts a new run and resets the counter |
-
-The run number is **not** sent to the receiver. So attempt `1` can reach your
-workflow more than once, and nothing in the delivery metadata distinguishes the
-first request of the first run from the first request of a replay. That is a
-property of the protocol, not a gap in this node.
-
-Which means `delivery.deliveryAttempt` tells you whether Comers is retrying —
-useful for logging, or for backing off on a flaky downstream — but it is not an
-identifier and not a basis for deduplication.
-
-The node deliberately keeps no record of what it has seen. It is a stateless
-receiver, and a per-instance memory of event ids would be wrong the moment you
-ran a second n8n or restarted the first.
-
-Deduplicate on **`event.eventId`**, which is stable across every attempt and
-every run: look it up before acting, or make the action itself safe to repeat.
-Nothing in `delivery` is a substitute for that.
+Delivery is **at-least-once**: the same `event.eventId` can arrive more than
+once — after a timeout, a retry or a replay from Comers. `deliveryAttempt`
+counts from 1 within a run and starts at 1 again after a replay, so it is not an
+identifier. Deduplicate on **`event.eventId`**. The node keeps no record of what
+it has seen.
 
 ## How a delivery is verified
 
-Comers signs the exact bytes of the request body:
+Comers sends every delivery as an RFC 7515 JWS in flattened JSON serialization
+(`Content-Type: application/json`):
+`{"protected": …, "payload": …, "signature": …}`, signed with ES256 by a key
+that belongs to your Comers installation — not to this workflow, and never
+shared with anyone. Before the workflow runs, the node:
 
-```
-HMAC-SHA256(secret, "v1:<timestamp>:<raw body bytes>")
-```
+1. requires exactly `protected`, `payload` and `signature` — no unprotected
+   header;
+2. requires the protected header to be exactly `alg: ES256`,
+   `typ: comers-delivery+jws` and a `kid` of the form `v<version>.<thumbprint>`.
+   `none`, HMAC and every other algorithm are refused before a key is chosen;
+3. finds the `kid` among the keys Comers publishes at
+   `<Comers URL>/core/api/v1/event-delivery-keys` — only that origin and that
+   path, as recorded at registration. Every key must be a well-formed public
+   P-256 key whose `kid` is its own RFC 7638 thumbprint. The key set is cached
+   for its `Cache-Control: max-age`. An unknown `kid` triggers one refresh (at
+   most one every 10 seconds), then the delivery is refused;
+4. verifies the signature over the exact bytes received;
+5. only then decodes the payload, and requires it to be signed for **this**
+   subscription and this organization, with a timestamp within **300 seconds**
+   of the n8n clock, and a valid Comers envelope.
 
-base64-encoded, offered in `X-Comers-Signature` as `v1=<signature>`, with more
-than one offered during a secret rotation.
-
-The node recomputes this over the bytes that arrived, using Node's built-in
-`node:crypto` and a constant-time comparison, and only then parses the JSON. A
-delivery it cannot verify never reaches the workflow.
-
-One caveat on "only then parses": n8n parses an `application/json` body in its
-own middleware before any node runs. So a body that is not syntactically valid
-JSON is answered `422` by n8n and the trigger never sees it. The node still
-reads and verifies the raw bytes itself rather than trusting that parse — it
-does not depend on n8n having succeeded — but on current n8n the node's own
-"not JSON" path is unreachable through a webhook.
-
-The timestamp is inside the signed string rather than beside it, so a captured
-delivery cannot be replayed later under a fresh timestamp. The node accepts a
-timestamp within **±300 seconds** of its own clock. That window is fixed and
-not configurable.
+Keep the n8n clock synchronised (NTP): the timestamp check is what stops a
+captured delivery being replayed later.
 
 ### Response codes, and what Comers does with them
 
-| Answered by | Code | When | What Comers does |
+| Status | Body | Meaning | Comers |
 | --- | --- | --- | --- |
-| the node | `200` | The delivery verified and the workflow started | Marks the delivery delivered |
-| the node | `401` | No signature, a signature that does not match, a signature scheme it does not understand, a malformed timestamp, or a timestamp outside the window | Treats it as a contract fault: **no retries**, the delivery goes straight to dead letters |
-| the node | `400` | The signature verified and the node ran, but the JSON it decoded is not a valid Comers envelope — a missing protocol field, a field of the wrong type, or a header disagreeing with the signed body | The same: **no retries**, straight to dead letters |
-| the node | `500` | Something unexpected broke inside the node — most often a missing or unreadable credential | Retries on the normal schedule |
-| **n8n** | `422` | The body is not syntactically valid JSON. n8n parses the request before handing it to any node, so this ends the request **before the trigger runs at all** — the signature is never checked | The same as `400`: **no retries**, straight to dead letters |
+| `200` | — | Verified; the workflow runs | delivered |
+| `400` | `not_flattened_jws`, `malformed_envelope` | Not a Comers delivery | dead letter, no retry |
+| `401` | `algorithm`, `protected_header`, `unknown_kid`, `signature`, `payload`, `payload_shape`, `malformed_delivery`, `other_subscription`, `other_organization`, `stale_timestamp`, `unsupported_spec_version`, `not_registered` | Refused | dead letter, no retry |
+| `503` | `keys_unavailable` | The public keys could not be fetched | retried |
+| `500` | `internal_error` | Unexpected failure | retried |
 
-The `400` and `422` rows differ in who answers, not in what happens next: both
-are terminal 4xx to Comers. The distinction matters when you are reading a dead
-letter — a `400` means a delivery that was genuinely from Comers and genuinely
-malformed, while a `422` means something sent bytes that were not JSON, and
-nothing verified who sent them.
-
-A `401` or `400` is deliberate. A wrong secret and a skewed clock do not get
-better by being retried six times over the next day; they need somebody to fix
-something. Sending the delivery to dead letters puts it where that person will
-see it, and keeps it replayable.
-
-So when deliveries stop arriving:
-
-1. Look at the delivery log in Business Settings. Dead letters with `401` mean
-   the secret in the credential is not the one Comers is signing with, or the
-   two clocks are more than five minutes apart.
-2. Fix it — paste the current secret, or fix the clock on the host running n8n.
-3. **Replay** the dead letters from Business Settings. Nothing is lost by
-   having been rejected.
-
-A `500` is retried, so a credential you forgot to attach fixes itself once you
-attach it.
+A `200` means n8n accepted the event, not that the workflow succeeded.
 
 ## Credentials
 
-**Comers Webhook Secret API** holds one field:
+**Comers API** holds the Comers URL, the client ID and the client secret (as a
+password field). n8n applies the client secret only to the token request, as
+HTTP Basic client authentication (`client_secret_basic`); every other call
+carries a short-lived access token. When Comers rejects a cached token, the
+node fetches a new one once and repeats the call once.
 
-| Field | |
-| --- | --- |
-| **Signing Secret** | The secret Comers showed once when the subscription was created or its secret was rotated. |
-
-This is not an API credential and not OAuth. The secret is never sent anywhere:
-it is used only to recompute the HMAC of an incoming delivery. It is stored
-encrypted by n8n, never written to the workflow, never included in the item the
-node emits, and never written to the log.
-
-## Automatic subscription management
-
-Version 0.1.0 does not create, update or remove subscriptions in Comers. Doing
-that would mean calling the Comers API, which needs an authenticated contract
-this node does not have and a safe place to put the secret that such a call
-would return. Both are open questions, not oversights, and they are being
-worked on separately.
-
-Until then the setup is the manual one described above, and it is complete as
-it stands: nothing here is waiting on a later release to work.
-
-n8n requires every webhook trigger to declare a registration lifecycle
-(`checkExists`, `create`, `delete`). This node implements all three as
-no-ops — they perform no I/O and contact nothing. That is why deactivating the
-workflow does not suspend the subscription.
+Rotating the client secret in Comers means updating the credential; the
+subscription and its deliveries are unaffected, because no delivery secret
+exists.
 
 ## Compatibility
 
-**Verified with n8n 2.38.6** — installed from a locally packed npm tarball and
-exercised end to end: activation, deactivation and reactivation, the full
-signature and envelope matrix, and the credential test.
+**Verified with n8n 2.40.5** — the built package loaded as a custom extension
+and exercised against a contract stub of the Comers API: the credential test,
+publishing (subscription created for the production URL), a signed delivery
+running the workflow, and unpublishing (subscription archived).
 
-Expected to work on any n8n that supports community nodes with
-`n8nNodesApiVersion: 1`, but no other version has been tested, so treat that as
-an expectation rather than a claim. Requires Node.js 20 or newer, which n8n
-already does.
-
-The package has no runtime dependencies. It reads no environment variables and
-touches no files.
+Requires a Comers installation with machine access and `jws-es256-v1` delivery
+(machine-credentials M7A). The package has no runtime dependencies. It reads no
+environment variables and touches no files.
 
 ## Development
 
