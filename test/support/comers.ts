@@ -16,6 +16,11 @@ export const ORGANIZATION_ID = '0199c3f0-1a2b-7c3d-8e4f-00000000000a';
 export const SCOPE = 'comers.core.events.subscriptions.manage-own';
 export const JWKS_PATH = '/core/api/v1/event-delivery-keys';
 
+/** Parameters as n8n stores them after selecting catalog options. */
+export const selectedEvents = (...values: string[]) => ({ events: { event: values.map((event) => ({ event })) } });
+export const productionState = (state: Record<string, unknown>): Record<string, unknown> =>
+	(state.production ?? {}) as Record<string, unknown>;
+
 export interface SigningKey {
 	kid: string;
 	privateKey: KeyObject;
@@ -292,7 +297,7 @@ export const hookContext = ({
 	staticData = {},
 	creds = credentials(),
 	mode = 'trigger',
-	parameters = { events: { event: [{ eventKey: 'comers.core.support.case.opened', eventVersion: 1 }] } },
+	parameters = selectedEvents('comers.core.support.case.opened@1'),
 	workflowId = 'wf-7Qx2',
 	nodeId = '6f1c2d3e-0000-4000-8000-000000000001',
 }: HookOptions) => ({
@@ -303,7 +308,7 @@ export const hookContext = ({
 		getNode: () => ({ id: nodeId, name: 'Comers Trigger', type: 'comersTrigger', typeVersion: 1, parameters: {} }),
 		getWorkflow: () => ({ id: workflowId, name: 'Orders', active: true }),
 		getNodeParameter: (name: string, fallback?: unknown) => parameters[name] ?? fallback,
-		getNodeWebhookUrl: () => WEBHOOK_URL,
+		getNodeWebhookUrl: () => mode === 'manual' ? WEBHOOK_URL.replace('/webhook/', '/webhook-test/') : WEBHOOK_URL,
 		getMode: () => mode,
 		helpers: helpers(stub, creds),
 	},

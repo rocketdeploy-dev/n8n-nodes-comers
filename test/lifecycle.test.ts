@@ -10,6 +10,8 @@ import {
 	JWKS_PATH,
 	ORGANIZATION_ID,
 	ORIGIN,
+	productionState,
+	selectedEvents,
 	WEBHOOK_URL,
 	type HookOptions,
 } from './support/comers';
@@ -49,19 +51,12 @@ describe('subscription lifecycle', () => {
 			targetUrl: WEBHOOK_URL,
 			events: [{ eventKey: 'comers.core.support.case.opened', eventVersion: 1 }],
 		});
-		expect(subscription.name).toMatch(/^Orders \/ Comers Trigger \[n8n [0-9a-f]{20}\]$/);
+		expect(subscription.name).toMatch(/^Orders \/ Comers Trigger \[n8n production [0-9a-f]{20}\]$/);
 		expect(posts(stub)[0].body).toMatchObject({ signatureProfile: 'jws-es256-v1' });
 
-		expect(Object.keys(staticData).sort()).toEqual([
-			'jwksUri',
-			'organizationId',
-			'registrationId',
-			'schemaVersion',
-			'signatureProfile',
-			'subscriptionId',
-		]);
-		expect(staticData).toMatchObject({
-			schemaVersion: 1,
+		expect(Object.keys(staticData).sort()).toEqual(['production', 'schemaVersion']);
+		expect({ schemaVersion: staticData.schemaVersion, ...productionState(staticData) }).toMatchObject({
+			schemaVersion: 2,
 			subscriptionId: subscription.subscriptionId,
 			jwksUri: `${ORIGIN}${JWKS_PATH}`,
 			signatureProfile: 'jws-es256-v1',
@@ -82,7 +77,7 @@ describe('subscription lifecycle', () => {
 		await activate({ stub, staticData });
 
 		expect(posts(stub)).toHaveLength(1);
-		expect(stub.requests.some((request) => request.method === 'GET' && request.path.endsWith(String(staticData.subscriptionId)))).toBe(true);
+		expect(stub.requests.some((request) => request.method === 'GET' && request.path.endsWith(String(productionState(staticData).subscriptionId)))).toBe(true);
 	});
 
 	it('updates the name and events of its subscription when the node changes', async () => {
@@ -92,13 +87,13 @@ describe('subscription lifecycle', () => {
 			staticData,
 			parameters: {
 				subscriptionName: 'Fulfilment',
-				events: { event: [{ eventKey: 'comers.core.orders.order.created', eventVersion: 2 }] },
+				...selectedEvents('comers.core.orders.order.created@2'),
 			},
 		});
 
 		const [subscription] = stub.subscriptions.values();
 		expect(posts(stub)).toHaveLength(1);
-		expect(subscription.name).toMatch(/^Fulfilment \[n8n [0-9a-f]{20}\]$/);
+		expect(subscription.name).toMatch(/^Fulfilment \[n8n production [0-9a-f]{20}\]$/);
 		expect(subscription.events).toEqual([{ eventKey: 'comers.core.orders.order.created', eventVersion: 2 }]);
 	});
 
@@ -110,7 +105,7 @@ describe('subscription lifecycle', () => {
 
 		expect(posts(stub)).toHaveLength(2);
 		expect(stub.subscriptions.size).toBe(1);
-		expect(staticData.subscriptionId).toBe([...stub.subscriptions.keys()][0]);
+		expect(productionState(staticData).subscriptionId).toBe([...stub.subscriptions.keys()][0]);
 	});
 
 	it('recovers a subscription whose create answer was lost, without creating a duplicate', async () => {
@@ -119,14 +114,14 @@ describe('subscription lifecycle', () => {
 
 		expect(await call(hooks.checkExists, context)).toBe(false);
 		await expect(call(hooks.create, context)).rejects.toThrow();
-		expect(staticData.subscriptionId).toBeUndefined();
+		expect(productionState(staticData).subscriptionId).toBeUndefined();
 		expect(stub.subscriptions.size).toBe(1);
 
 		// n8n tries the activation again.
 		await activate({ stub, staticData });
 
 		expect(posts(stub)).toHaveLength(1);
-		expect(staticData.subscriptionId).toBe([...stub.subscriptions.keys()][0]);
+		expect(productionState(staticData).subscriptionId).toBe([...stub.subscriptions.keys()][0]);
 	});
 
 	it('archives a subscription whose create answer was lost when the workflow is deactivated right after', async () => {
@@ -134,13 +129,13 @@ describe('subscription lifecycle', () => {
 		const { context } = hookContext({ stub, staticData });
 
 		await expect(call(hooks.create, context)).rejects.toThrow();
-		expect(staticData.subscriptionId).toBeUndefined();
+		expect(productionState(staticData).subscriptionId).toBeUndefined();
 		const [orphan] = stub.subscriptions.values();
 
 		// No checkExists in between: delete itself has to find the orphan.
 		expect(await call(hooks.delete, context)).toBe(true);
 		expect(orphan.state).toBe('archived');
-		expect(staticData.subscriptionId).toBeUndefined();
+		expect(productionState(staticData).subscriptionId).toBeUndefined();
 	});
 
 	it('does not read an unfinished subscription list as "not found"', async () => {
@@ -160,7 +155,7 @@ describe('subscription lifecycle', () => {
 		await activate({ stub, staticData });
 
 		expect(posts(stub)).toHaveLength(2);
-		expect(staticData.subscriptionId).not.toBe(foreign.subscriptionId);
+		expect(productionState(staticData).subscriptionId).not.toBe(foreign.subscriptionId);
 	});
 
 	it('refuses to guess between two subscriptions that both match', async () => {
@@ -176,35 +171,35 @@ describe('subscription lifecycle', () => {
 
 	it('does not treat an error while checking as "does not exist"', async () => {
 		await activate({ stub, staticData });
-		stub.failOnce[`GET /core/api/v1/event-subscriptions/${String(staticData.subscriptionId)}`] = 503;
+		stub.failOnce[`GET /core/api/v1/event-subscriptions/${String(productionState(staticData).subscriptionId)}`] = 503;
 		const { context } = hookContext({ stub, staticData });
 
 		await expect(call(hooks.checkExists, context)).rejects.toThrow(/right now/);
 		expect(posts(stub)).toHaveLength(1);
-		expect(staticData.subscriptionId).toBeDefined();
+		expect(productionState(staticData).subscriptionId).toBeDefined();
 	});
 
 	it('archives exactly its subscription on deactivation and clears the state only after 204 or 404', async () => {
 		await activate({ stub, staticData });
-		const id = String(staticData.subscriptionId);
+		const id = String(productionState(staticData).subscriptionId);
 		const { context } = hookContext({ stub, staticData });
 
 		// A transient failure keeps the state, so n8n can retry the cleanup.
 		stub.failOnce[`DELETE /core/api/v1/event-subscriptions/${id}`] = 503;
 		await expect(call(hooks.delete, context)).rejects.toThrow();
-		expect(staticData.subscriptionId).toBe(id);
+		expect(productionState(staticData).subscriptionId).toBe(id);
 
 		expect(await call(hooks.delete, context)).toBe(true);
 		expect(stub.subscriptions.get(id)?.state).toBe('archived');
-		expect(staticData.subscriptionId).toBeUndefined();
+		expect(productionState(staticData).subscriptionId).toBeUndefined();
 
 		// Already archived and forgotten: nothing to do.
 		expect(await call(hooks.delete, context)).toBe(true);
 
 		// 404 is idempotent too.
-		staticData.subscriptionId = '0199c3f0-1a2b-7c3d-8e4f-0000000000dd';
+		staticData.production = { subscriptionId: '0199c3f0-1a2b-7c3d-8e4f-0000000000dd' };
 		expect(await call(hooks.delete, context)).toBe(true);
-		expect(staticData.subscriptionId).toBeUndefined();
+		expect(productionState(staticData).subscriptionId).toBeUndefined();
 	});
 
 	it('fetches a new token once when Comers rejects the cached one, and never more than once', async () => {
@@ -225,26 +220,39 @@ describe('subscription lifecycle', () => {
 		expect(String(error)).not.toContain(CLIENT_MATERIAL);
 	});
 
-	it('refuses an event key that is not one, and accepts any well-formed future key', async () => {
-		const bad = hookContext({ stub, staticData: {}, parameters: { events: { event: [{ eventKey: 'Orders Created' }] } } });
-		await expect(call(hooks.checkExists, bad.context)).rejects.toThrow(/not an event key/);
+	it('rejects a non-catalog choice and preserves a selected future catalog event', async () => {
+		const bad = hookContext({ stub, staticData: {}, parameters: selectedEvents('Orders Created@1') });
+		await expect(call(hooks.checkExists, bad.context)).rejects.toThrow(/Choose an event/);
 
 		await activate({
 			stub,
 			staticData,
-			parameters: { events: { event: [{ eventKey: 'comers.core.future.thing.happened', eventVersion: 3 }] } },
+			parameters: selectedEvents('comers.core.future.thing.happened@3'),
 		});
 		expect([...stub.subscriptions.values()][0].events).toEqual([
 			{ eventKey: 'comers.core.future.thing.happened', eventVersion: 3 },
 		]);
 	});
 
-	it('registers nothing while the editor listens for a test event', async () => {
+	it('keeps test listening isolated from production and archives only the test subscription', async () => {
+		await activate({ stub, staticData });
+		const productionId = String(productionState(staticData).subscriptionId);
 		const { context } = hookContext({ stub, staticData, mode: 'manual' });
+		if (!(await call(hooks.checkExists, context))) await call(hooks.create, context);
 
-		expect(await call(hooks.checkExists, context)).toBe(true);
-		expect(await call(hooks.create, context)).toBe(true);
+		const test = staticData.test as Record<string, unknown>;
+		const testId = String(test.subscriptionId);
+		expect(testId).not.toBe(productionId);
+		expect(stub.subscriptions.get(testId)?.targetUrl).toContain('/webhook-test/');
+		expect(posts(stub).at(-1)?.body).toMatchObject({ expiresInSeconds: 600 });
+		expect(stub.subscriptions.get(productionId)?.targetUrl).toBe(WEBHOOK_URL);
+		expect(posts(stub)[0].body).not.toHaveProperty('expiresInSeconds');
+		expect(stub.subscriptions.get(testId)?.name).toMatch(/\[n8n test [0-9a-f]{20}\]$/);
+		expect(stub.subscriptions.get(productionId)?.name).toMatch(/\[n8n production [0-9a-f]{20}\]$/);
+
 		expect(await call(hooks.delete, context)).toBe(true);
-		expect(stub.requests).toHaveLength(0);
+		expect(stub.subscriptions.get(testId)?.state).toBe('archived');
+		expect(stub.subscriptions.get(productionId)?.state).toBe('active');
+		expect(productionState(staticData).subscriptionId).toBe(productionId);
 	});
 });

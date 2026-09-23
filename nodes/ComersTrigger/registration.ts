@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { IDataObject, IHookFunctions } from 'n8n-workflow';
+import type { IDataObject, IHookFunctions, IWebhookFunctions } from 'n8n-workflow';
 
 import {
 	comersConnection,
@@ -34,7 +34,7 @@ import {
  */
 
 export const SIGNATURE_PROFILE = 'jws-es256-v1';
-export const STATE_SCHEMA_VERSION = 1;
+export const STATE_SCHEMA_VERSION = 2;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const EVENT_KEY = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
@@ -42,10 +42,17 @@ const REASON = /^[a-z_]{1,64}$/;
 const NAME_LIMIT = 120;
 const LIST_PAGE_SIZE = 100;
 const LIST_PAGE_LIMIT = 50;
+/** Backstop for editor listeners; production registrations intentionally omit it. */
+export const TEST_SUBSCRIPTION_TTL_SECONDS = 600;
 
 export interface RegistrationState {
 	schemaVersion: number;
-	registrationId: string;
+	production?: RegistrationSlot;
+	test?: RegistrationSlot;
+}
+
+export interface RegistrationSlot {
+	registrationId?: string;
 	subscriptionId?: string;
 	jwksUri?: string;
 	signatureProfile?: string;
@@ -62,6 +69,7 @@ interface Subscription {
 }
 
 interface Desired {
+	mode: RegistrationMode;
 	registrationId: string;
 	name: string;
 	/** Ends every name this node gives a subscription; what recovery matches on. */
@@ -69,6 +77,8 @@ interface Desired {
 	targetUrl: string;
 	events: Array<{ eventKey: string; eventVersion: number }>;
 }
+
+export type RegistrationMode = 'production' | 'test';
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -109,66 +119,67 @@ const unexpected = (what: string, response: ComersResponse): string => {
 };
 
 export function registrationState(this: IHookFunctions): RegistrationState & IDataObject {
-	return this.getWorkflowStaticData('node') as RegistrationState & IDataObject;
+	const state = this.getWorkflowStaticData('node') as RegistrationState & IDataObject;
+	if (state.schemaVersion !== STATE_SCHEMA_VERSION) {
+		const legacy = state as RegistrationSlot & IDataObject;
+		if (typeof legacy.registrationId === 'string') state.production = { ...legacy };
+		delete legacy.registrationId; delete legacy.subscriptionId; delete legacy.jwksUri;
+		delete legacy.signatureProfile; delete legacy.organizationId;
+		state.schemaVersion = STATE_SCHEMA_VERSION;
+	}
+	return state;
 }
 
-const clearSubscription = (state: RegistrationState & IDataObject): void => {
-	delete state.subscriptionId;
-	delete state.jwksUri;
-	delete state.signatureProfile;
-	delete state.organizationId;
+const slotFor = (state: RegistrationState & IDataObject, mode: RegistrationMode): RegistrationSlot & IDataObject => {
+	if (!isObject(state[mode])) state[mode] = {};
+	return state[mode] as RegistrationSlot & IDataObject;
+};
+
+const clearSubscription = (state: RegistrationState & IDataObject, mode: RegistrationMode): void => {
+	delete state[mode];
 };
 
 /** How this node's subscription is recognised: its registration marker and production URL. */
 type Identity = Pick<Desired, 'registrationId' | 'marker' | 'targetUrl'>;
 
-export function registrationIdentity(this: IHookFunctions): Identity {
+export function registrationIdentity(this: IHookFunctions, mode: RegistrationMode = this.getMode() === 'manual' ? 'test' : 'production'): Identity {
 	const workflow = this.getWorkflow();
 	const node = this.getNode();
 	// Stable for this workflow and node across activations and restarts, and
 	// different for a copied workflow, so a lost create can be found again.
 	const registrationId = createHash('sha256')
-		.update(`${workflow.id ?? ''}\u0000${node.id}`)
+		.update(`${workflow.id ?? ''}\u0000${node.id}\u0000${mode}`)
 		.digest('hex')
 		.slice(0, 20);
 	const targetUrl = this.getNodeWebhookUrl('default');
 
 	if (targetUrl === undefined) {
-		throw comersError(this, 'n8n did not provide a production webhook URL for this node.');
+		throw comersError(this, `n8n did not provide a ${mode} webhook URL for this node.`);
 	}
 
-	return { registrationId, marker: ` [n8n ${registrationId}]`, targetUrl };
+	return { registrationId, marker: ` [n8n ${mode} ${registrationId}]`, targetUrl };
 }
 
 /** What the subscription should look like, from the node's parameters. */
 export function desiredSubscription(this: IHookFunctions): Desired {
 	const workflow = this.getWorkflow();
 	const node = this.getNode();
-	const { registrationId, marker, targetUrl } = registrationIdentity.call(this);
+	const mode: RegistrationMode = this.getMode() === 'manual' ? 'test' : 'production';
+	const { registrationId, marker, targetUrl } = registrationIdentity.call(this, mode);
 	const label =
 		String(this.getNodeParameter('subscriptionName', '') ?? '').trim() ||
 		`${workflow.name ?? 'n8n workflow'} / ${node.name}`;
 
 	const selected = this.getNodeParameter('events', {}) as {
-		event?: Array<{ eventKey?: unknown; eventVersion?: unknown }>;
+		event?: Array<{ event?: unknown }>;
 	};
 	const events: Desired['events'] = [];
 	const seen = new Set<string>();
 
 	for (const entry of selected.event ?? []) {
-		const eventKey = String(entry.eventKey ?? '').trim();
-		const eventVersion = Number(entry.eventVersion ?? 1);
-
-		if (!EVENT_KEY.test(eventKey)) {
-			throw comersError(
-				this,
-				`"${eventKey}" is not an event key. Event keys are dotted lowercase names, for example comers.core.orders.order.created.`,
-			);
-		}
-
-		if (!Number.isSafeInteger(eventVersion) || eventVersion < 1) {
-			throw comersError(this, `The version of ${eventKey} must be a whole number of at least 1.`);
-		}
+		const choice = decodeEventChoice(entry.event);
+		if (choice === undefined) throw comersError(this, 'Choose an event from the current Comers catalog.');
+		const { eventKey, eventVersion } = choice;
 
 		const key = `${eventKey}@${eventVersion}`;
 
@@ -183,6 +194,7 @@ export function desiredSubscription(this: IHookFunctions): Desired {
 	}
 
 	return {
+		mode,
 		registrationId,
 		marker,
 		name: `${label.slice(0, NAME_LIMIT - marker.length)}${marker}`,
@@ -190,6 +202,15 @@ export function desiredSubscription(this: IHookFunctions): Desired {
 		events,
 	};
 }
+
+/** Stable n8n option value; versions are part of the identity, never inferred. */
+export const decodeEventChoice = (value: unknown): { eventKey: string; eventVersion: number } | undefined => {
+	if (typeof value !== 'string') return undefined;
+	const match = /^(.+)@(\d+)$/.exec(value);
+	if (match === null) return undefined;
+	const eventVersion = Number(match[2]);
+	return EVENT_KEY.test(match[1]) && Number.isSafeInteger(eventVersion) && eventVersion > 0 ? { eventKey: match[1], eventVersion } : undefined;
+};
 
 const sameEvents = (left: Desired['events'], right: Desired['events']): boolean => {
 	const key = (events: Desired['events']) =>
@@ -339,12 +360,12 @@ async function adopt(
 	const { organizationId } = await integration.call(this, connection);
 
 	await reconcile.call(this, connection, subscription, desired);
-	state.schemaVersion = STATE_SCHEMA_VERSION;
-	state.registrationId = desired.registrationId;
-	state.subscriptionId = subscription.subscriptionId;
-	state.jwksUri = deliveryKeysUri(connection.origin);
-	state.signatureProfile = SIGNATURE_PROFILE;
-	state.organizationId = organizationId;
+	const slot = slotFor(state, desired.mode);
+	slot.registrationId = desired.registrationId;
+	slot.subscriptionId = subscription.subscriptionId;
+	slot.jwksUri = deliveryKeysUri(connection.origin);
+	slot.signatureProfile = SIGNATURE_PROFILE;
+	slot.organizationId = organizationId;
 }
 
 async function archive(
@@ -374,13 +395,14 @@ export async function checkExists(this: IHookFunctions): Promise<boolean> {
 	const state = registrationState.call(this);
 	const connection = await comersConnection.call(this);
 	const desired = desiredSubscription.call(this);
+	const slot = slotFor(state, desired.mode);
 
-	if (typeof state.subscriptionId === 'string') {
+	if (typeof slot.subscriptionId === 'string') {
 		const response = await comersRequest.call(
 			this,
 			connection,
 			'GET',
-			`${SUBSCRIPTIONS_PATH}/${state.subscriptionId}`,
+			`${SUBSCRIPTIONS_PATH}/${slot.subscriptionId}`,
 		);
 
 		if (response.statusCode === 200) {
@@ -400,9 +422,9 @@ export async function checkExists(this: IHookFunctions): Promise<boolean> {
 			if (subscription.state !== 'archived') {
 				await archive.call(this, connection, subscription.subscriptionId);
 			}
-			clearSubscription(state);
+			clearSubscription(state, desired.mode);
 		} else if (response.statusCode === 404) {
-			clearSubscription(state);
+			clearSubscription(state, desired.mode);
 		} else {
 			throw comersError(this, unexpected('read the subscription', response));
 		}
@@ -431,6 +453,7 @@ export async function createSubscription(this: IHookFunctions): Promise<boolean>
 		name: desired.name,
 		targetUrl: desired.targetUrl,
 		events: desired.events,
+		...(desired.mode === 'test' ? { expiresInSeconds: TEST_SUBSCRIPTION_TTL_SECONDS } : {}),
 	});
 
 	if (response.statusCode !== 201 || !isObject(response.body)) {
@@ -461,14 +484,35 @@ export async function createSubscription(this: IHookFunctions): Promise<boolean>
 		);
 	}
 
-	state.schemaVersion = STATE_SCHEMA_VERSION;
-	state.registrationId = desired.registrationId;
-	state.subscriptionId = subscription.subscriptionId;
-	state.jwksUri = expectedKeys;
-	state.signatureProfile = SIGNATURE_PROFILE;
-	state.organizationId = organizationId;
+	const slot = slotFor(state, desired.mode);
+	slot.registrationId = desired.registrationId;
+	slot.subscriptionId = subscription.subscriptionId;
+	slot.jwksUri = expectedKeys;
+	slot.signatureProfile = SIGNATURE_PROFILE;
+	slot.organizationId = organizationId;
 
 	return true;
+}
+
+/**
+ * Best-effort cleanup after a verified test delivery. n8n does not guarantee
+ * webhookMethods.delete for editor listeners, so failure is deliberately not
+ * made visible to the execution; the server-side TTL remains authoritative.
+ */
+export async function archiveDeliveredTestSubscription(
+	this: IWebhookFunctions,
+	subscriptionId: string,
+): Promise<void> {
+	const connection = await comersConnection.call(this);
+	const response = await comersRequest.call(
+		this,
+		connection,
+		'DELETE',
+		`${SUBSCRIPTIONS_PATH}/${subscriptionId}`,
+	);
+	if (response.statusCode !== 204 && response.statusCode !== 404) {
+		throw comersError(this, unexpected('archive the test subscription', response));
+	}
 }
 
 /**
@@ -484,18 +528,20 @@ export async function createSubscription(this: IHookFunctions): Promise<boolean>
 export async function deleteSubscription(this: IHookFunctions): Promise<boolean> {
 	const state = registrationState.call(this);
 	const connection = await comersConnection.call(this);
+	const mode: RegistrationMode = this.getMode() === 'manual' ? 'test' : 'production';
+	const slot = slotFor(state, mode);
 
-	if (typeof state.subscriptionId === 'string') {
-		await archive.call(this, connection, state.subscriptionId);
+	if (typeof slot.subscriptionId === 'string') {
+		await archive.call(this, connection, slot.subscriptionId);
 	} else {
-		const orphan = await findOwn.call(this, connection, registrationIdentity.call(this));
+		const orphan = await findOwn.call(this, connection, registrationIdentity.call(this, mode));
 
 		if (orphan !== undefined) {
 			await archive.call(this, connection, orphan.subscriptionId);
 		}
 	}
 
-	clearSubscription(state);
+	clearSubscription(state, mode);
 
 	return true;
 }

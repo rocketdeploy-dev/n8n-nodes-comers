@@ -1,6 +1,7 @@
 import type {
 	IDataObject,
 	IHookFunctions,
+	ILoadOptionsFunctions,
 	INodeType,
 	INodeTypeDescription,
 	IWebhookFunctions,
@@ -21,15 +22,14 @@ import {
 	checkExists,
 	createSubscription,
 	deleteSubscription,
+	archiveDeliveredTestSubscription,
 	SIGNATURE_PROFILE,
 	type RegistrationState,
 } from './registration';
+import { getEventOptions } from './event-catalog';
 
 /** Public delivery keys, shared by every Comers Trigger in this process. */
 export const deliveryKeys = new DeliveryKeyCache();
-
-/** Test listening in the editor has no production URL and registers nothing. */
-const isTestListening = (context: IHookFunctions): boolean => context.getMode() === 'manual';
 
 /** Verifies the delivery against the published keys; the payload only once the signature holds. */
 async function verifiedPayload(
@@ -108,25 +108,17 @@ export class ComersTrigger implements INodeType {
 					'The Comers events that start this workflow. Any event key Comers publishes can be used, including ones added after this node was released.',
 				options: [
 					{
-						displayName: 'Event',
+								displayName: 'Event',
 						name: 'event',
 						values: [
 							{
-								displayName: 'Event Key',
-								name: 'eventKey',
-								type: 'string',
+									displayName: 'Event Name or ID',
+								name: 'event',
+								type: 'options',
+								typeOptions: { loadOptionsMethod: 'getEventOptions' },
 								default: '',
 								required: true,
-								placeholder: 'comers.core.orders.order.created',
-								description: 'The event key, as listed in the Comers event catalog',
-							},
-							{
-								displayName: 'Event Version',
-								name: 'eventVersion',
-								type: 'number',
-								typeOptions: { minValue: 1, numberPrecision: 0 },
-								default: 1,
-								description: 'The version of the event’s payload',
+									description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 							},
 						],
 					},
@@ -138,22 +130,18 @@ export class ComersTrigger implements INodeType {
 	webhookMethods = {
 		default: {
 			async checkExists(this: IHookFunctions): Promise<boolean> {
-				if (isTestListening(this)) return true;
-
 				return checkExists.call(this);
 			},
 			async create(this: IHookFunctions): Promise<boolean> {
-				if (isTestListening(this)) return true;
-
 				return createSubscription.call(this);
 			},
 			async delete(this: IHookFunctions): Promise<boolean> {
-				if (isTestListening(this)) return true;
-
 				return deleteSubscription.call(this);
 			},
 		},
 	};
+
+	methods = { loadOptions: { getEventOptions: async function (this: ILoadOptionsFunctions) { return getEventOptions.call(this); } } };
 
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
 		const response = this.getResponseObject();
@@ -172,13 +160,17 @@ export class ComersTrigger implements INodeType {
 			const state = this.getWorkflowStaticData('node') as RegistrationState & IDataObject;
 			const connection = await comersConnection.call(this);
 
-			// Only a published, registered node receives deliveries, and only with
-			// keys from the Comers the credential names.
-			if (
-				typeof state.subscriptionId !== 'string' ||
-				state.signatureProfile !== SIGNATURE_PROFILE ||
-				state.jwksUri !== deliveryKeysUri(connection.origin)
-			) {
+			const registrations = ([['production', state.production], ['test', state.test]] as const).filter(
+				(entry): entry is ['production' | 'test', NonNullable<typeof state.test>] => {
+					const slot = entry[1];
+					return (
+					typeof slot?.subscriptionId === 'string' &&
+					slot.signatureProfile === SIGNATURE_PROFILE &&
+					slot.jwksUri === deliveryKeysUri(connection.origin)
+					);
+				},
+			);
+			if (registrations.length === 0) {
 				return refuse(401, 'not_registered');
 			}
 
@@ -188,7 +180,7 @@ export class ComersTrigger implements INodeType {
 				await request.readRawBody();
 			}
 
-			const verified = await verifiedPayload.call(this, state.jwksUri, request.rawBody);
+			const verified = await verifiedPayload.call(this, deliveryKeysUri(connection.origin), request.rawBody);
 
 			if (!verified.ok) {
 				if ('unavailable' in verified) {
@@ -205,17 +197,32 @@ export class ComersTrigger implements INodeType {
 				return refuse(verified.refused === 'not_flattened_jws' ? 400 : 401, verified.refused);
 			}
 
-			const delivery = readDelivery({
+			// The JWS is verified before selecting an identity. Then only the exact
+			// test or production subscription ID may accept its envelope.
+			const deliveries = registrations.map(([mode, slot]) => ({ mode, slot, delivery: readDelivery({
 				payload: verified.payload,
-				subscriptionId: state.subscriptionId,
-				organizationId: typeof state.organizationId === 'string' ? state.organizationId : undefined,
+				subscriptionId: slot.subscriptionId as string,
+				organizationId: typeof slot.organizationId === 'string' ? slot.organizationId : undefined,
 				nowSeconds: Math.floor(Date.now() / 1000),
-			});
+			}) }));
+			const matched = deliveries.find((candidate) => candidate.delivery.ok) ?? deliveries[0];
+			const delivery = matched?.delivery;
 
-			if (!delivery.ok) {
-				this.logger.warn('Comers Trigger refused a delivery', { reason: delivery.reason });
+			if (delivery === undefined || !delivery.ok) {
+				const reason = delivery === undefined ? 'other_subscription' : delivery.reason;
+				this.logger.warn('Comers Trigger refused a delivery', { reason });
 
-				return refuse(delivery.reason === 'malformed_envelope' ? 400 : 401, delivery.reason);
+				return refuse(reason === 'malformed_envelope' ? 400 : 401, reason);
+			}
+
+			if (matched?.mode === 'test') {
+				try {
+					await archiveDeliveredTestSubscription.call(this, matched.slot.subscriptionId as string);
+				} catch (error) {
+					this.logger.warn('Comers Trigger could not archive its delivered test subscription', {
+						failure: error instanceof Error ? error.name : 'UnknownError',
+					});
+				}
 			}
 
 			return {
