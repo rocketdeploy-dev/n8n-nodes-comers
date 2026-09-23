@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Load the supported event keys and versions dynamically from the Comers event catalog.
+- Support n8n test listeners with dedicated, short-lived webhook subscriptions.
+
+### Changed
+
+- Manage test and production webhook subscriptions independently, with separate URLs, markers, and lifecycle state.
+- Archive a test subscription after its first verified delivery, with a ten-minute server-side TTL as a cleanup backstop.
+
 ## 0.2.0 — 2026-09-22
 
 This release replaces the manual HMAC setup. No installed workflow depends on
