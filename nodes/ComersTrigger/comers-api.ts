@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { IDataObject, IHookFunctions, IWebhookFunctions } from 'n8n-workflow';
+import type { IDataObject, IHookFunctions, ILoadOptionsFunctions, IWebhookFunctions } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 
 /**
@@ -14,7 +14,7 @@ import { NodeOperationError } from 'n8n-workflow';
  * fetches a new one.
  */
 
-type Context = IHookFunctions | IWebhookFunctions;
+type Context = IHookFunctions | ILoadOptionsFunctions | IWebhookFunctions;
 
 /** The one scope the trigger needs. */
 export const SUBSCRIPTION_SCOPE = 'comers.core.events.subscriptions.manage-own';
@@ -23,6 +23,7 @@ export const SUBSCRIPTION_SCOPE = 'comers.core.events.subscriptions.manage-own';
 export const PUBLISHED_JWKS_PATH = '/core/api/v1/event-delivery-keys';
 
 export const SUBSCRIPTIONS_PATH = '/core/api/v1/event-subscriptions';
+export const CATALOG_PATH = `${SUBSCRIPTIONS_PATH}/catalog`;
 
 /** What a request to Comers needs, without the secret. */
 export interface ComersConnection {

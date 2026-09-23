@@ -62,7 +62,10 @@ webhook URL. Unpublishing or deleting the workflow archives it; publishing
 again creates a new one. Changing the events or the name and publishing again
 updates the existing subscription.
 
-"Listen for test event" in the editor does not register anything: Comers only
+"Listen for test event" in the editor creates a temporary Comers subscription
+for n8n's `webhook-test` URL. It is separate from the production subscription,
+uses the same `jws-es256-v1` verification, and is archived when listening ends.
+Publishing creates a separate production subscription for the `webhook` URL.
 delivers to published workflows, and those deliveries appear in the executions
 list.
 

@@ -9,6 +9,7 @@ import {
 	envelope,
 	hookContext,
 	newSigningKey,
+	productionState,
 	signedDelivery,
 	webhookContext,
 } from './support/comers';
@@ -31,7 +32,7 @@ describe('delivery verification', () => {
 		staticData = {};
 		const { context } = hookContext({ stub, staticData });
 		await trigger.webhookMethods.default.create.call(context as unknown as IHookFunctions);
-		subscriptionId = String(staticData.subscriptionId);
+		subscriptionId = String(productionState(staticData).subscriptionId);
 	});
 
 	const deliver = async (body: string) => {
@@ -179,5 +180,22 @@ describe('delivery verification', () => {
 		const { result, reply } = await deliver(signedDelivery({ key: stub.keys[0], subscriptionId }));
 		expect(result.workflowData).toBeUndefined();
 		expect(reply).toEqual({ status: 401, body: 'not_registered' });
+	});
+
+	it('best-effort archives the exact test subscription after its verified delivery', async () => {
+		const testData: Record<string, unknown> = {};
+		const manual = hookContext({ stub, staticData: testData, mode: 'manual' });
+		await trigger.webhookMethods.default.create.call(manual.context as unknown as IHookFunctions);
+		const testId = String((testData.test as Record<string, unknown>).subscriptionId);
+
+		const hook = webhookContext({
+			stub,
+			staticData: testData,
+			body: signedDelivery({ key: stub.keys[0], subscriptionId: testId }),
+		});
+		const result = await trigger.webhook.call(hook.context as unknown as IWebhookFunctions);
+
+		expect(result.workflowData).toHaveLength(1);
+		expect(stub.subscriptions.get(testId)?.state).toBe('archived');
 	});
 });
