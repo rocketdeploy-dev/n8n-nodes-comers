@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 — 2026-09-23
+
 ### Added
 
 - Load the supported event keys and versions dynamically from the Comers event catalog.
