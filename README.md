@@ -11,8 +11,10 @@ This package contains one trigger node and one credential:
 | **Comers Trigger** | Creates the workflow's own Comers event subscription when the workflow is published, verifies every delivery against Comers' public keys before the workflow runs, and archives the subscription when the workflow is unpublished or deleted. |
 | **Comers API** | A Comers machine integration: the Comers URL, a client ID and a client secret. |
 
-There is nothing to copy between Comers and n8n by hand: no webhook URL to
-paste into Comers and no signing secret to paste into n8n.
+The one-time API client ID and client secret are copied from Comers into the
+encrypted n8n credential. No webhook URL or delivery-signing secret is copied:
+the node manages its webhook subscriptions and verifies deliveries with public
+keys. A future zero-copy authorization flow is a separate enhancement.
 
 ## Installation
 
@@ -44,12 +46,10 @@ comers.core.events.subscriptions.manage-own*).
 
 ### 3. Add the trigger and choose events
 
-Add **Comers Trigger**, pick the credential and list the events:
-
-- **Event Key** — any key from the Comers event catalog, for example
-  `comers.core.support.case.opened`. There is no fixed list in the node: an
-  event Comers adds later works without a new release of this package.
-- **Event Version** — the payload version, 1 unless the catalog says otherwise.
+Add **Comers Trigger**, pick the credential and choose events from **Events**.
+The node loads the versioned choices from the Comers event catalog and stores
+each selection as one `eventKey@eventVersion` value. There is no fixed list in
+the package: an event Comers adds later appears without a new node release.
 
 **Subscription Name** is optional; by default it is the workflow and node
 names. The node always appends a short identifier, `[n8n <id>]`, which it uses
@@ -64,10 +64,12 @@ updates the existing subscription.
 
 "Listen for test event" in the editor creates a temporary Comers subscription
 for n8n's `webhook-test` URL. It is separate from the production subscription,
-uses the same `jws-es256-v1` verification, and is archived when listening ends.
-Publishing creates a separate production subscription for the `webhook` URL.
-delivers to published workflows, and those deliveries appear in the executions
-list.
+uses the same `jws-es256-v1` verification, and expires after ten minutes. After
+the first verified test delivery the node also attempts to archive it
+immediately; the server-side expiry is the guaranteed cleanup backstop because
+n8n does not guarantee a callback when listening stops. Publishing creates a
+separate, non-expiring production subscription for the `webhook` URL, and its
+deliveries appear in the executions list.
 
 n8n registers the webhook just after the workflow is published. If Comers
 cannot be reached or refuses (for example because the integration lacks the
@@ -82,11 +84,12 @@ verify its subscription — none of it is secret:
 | Key | |
 | --- | --- |
 | `schemaVersion` | The layout of this state |
-| `registrationId` | A stable identifier of this workflow and node, also in the subscription name |
-| `subscriptionId` | The subscription Comers created |
-| `jwksUri` | Where Comers publishes the keys that verify its deliveries |
-| `signatureProfile` | Always `jws-es256-v1` |
-| `organizationId` | The integration's organization, which every delivery must be signed for |
+| `production` | Non-secret registration slot for the published workflow |
+| `test` | Separate non-secret registration slot for editor listening |
+
+Each slot may contain `registrationId`, `subscriptionId`, `jwksUri`,
+`signatureProfile` and `organizationId`. Keeping two slots prevents a test
+listener from adopting, updating or archiving the production subscription.
 
 n8n stores static data unencrypted and includes it in workflow exports, which
 is exactly why nothing secret goes there. The client secret stays in the
@@ -221,10 +224,12 @@ exists.
 
 ## Compatibility
 
-**Verified with n8n 2.40.5** — the built package loaded as a custom extension
-and exercised against a contract stub of the Comers API: the credential test,
-publishing (subscription created for the production URL), a signed delivery
-running the workflow, and unpublishing (subscription archived).
+**Tested with n8n 2.40.5** — the built package loaded as a custom extension and
+was exercised against the Comers API contract: the credential test, dynamic
+catalog, separate test and production subscriptions, signed deliveries running
+the workflow, test cleanup, and production unpublish cleanup. Version `0.3.0`
+was then exercised against the production Comers deployment. Official n8n
+community-node verification remains pending the Creator Portal video review.
 
 Requires a Comers installation with machine access and `jws-es256-v1` delivery
 (machine-credentials M7A). The package has no runtime dependencies. It reads no

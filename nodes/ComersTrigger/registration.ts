@@ -21,13 +21,12 @@ import {
  * subscription, none of it secret:
  *
  *   schemaVersion     this layout, so a future one can be told apart
- *   registrationId    a stable identifier of this workflow and node, also
- *                     written into the subscription name
- *   subscriptionId    the subscription Comers created
- *   jwksUri           where the keys that verify its deliveries are published
- *   signatureProfile  always `jws-es256-v1`
- *   organizationId    the integration's organization, which every delivery
- *                     must be signed for
+ *   production        registration slot for the published workflow
+ *   test              separate registration slot for editor listening
+ *
+ * Each slot carries registrationId, subscriptionId, jwksUri,
+ * signatureProfile and organizationId. Separate slots keep test cleanup from
+ * adopting or archiving the production subscription.
  *
  * No access token, client secret or delivery key is ever stored here: n8n
  * keeps static data in plain text in its database and workflow exports.
