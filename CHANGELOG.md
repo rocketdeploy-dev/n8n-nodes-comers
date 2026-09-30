@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.1 — 2026-09-30
+
 ### Fixed
 
 - Name the trigger node in its codex after this package,
