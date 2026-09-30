@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- Name the trigger node in its codex after this package,
+  `@comers/n8n-nodes-comers.comersTrigger`, instead of `n8n-nodes-base.comersTrigger`.
+- Drop the unsupported `Developer Tools` codex category; the node is listed under
+  `Development` only.
+
 ## 0.3.0 — 2026-09-23
 
 ### Added

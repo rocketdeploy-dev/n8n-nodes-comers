@@ -1,8 +1,8 @@
 {
-	"node": "n8n-nodes-base.comersTrigger",
+	"node": "@comers/n8n-nodes-comers.comersTrigger",
 	"nodeVersion": "1.0",
 	"codexVersion": "1.0",
-	"categories": ["Development", "Developer Tools"],
+	"categories": ["Development"],
 	"resources": {
 		"credentialDocumentation": [
 			{
